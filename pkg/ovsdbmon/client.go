@@ -42,11 +42,14 @@ func nbSpec(name string) TableSpec {
 }
 
 // NBTables are the OVN_Northbound tables counted by owner type and network.
+// Load_Balancer_Group has no external_ids column (NB schema 7.18.0), so its
+// rows count under owner_type="none", network="default".
 var NBTables = []TableSpec{
 	nbSpec("ACL"), nbSpec("Port_Group"), nbSpec("Address_Set"),
 	nbSpec("Logical_Switch_Port"), nbSpec("Logical_Switch"),
 	nbSpec("Logical_Router"), nbSpec("Logical_Router_Port"),
-	nbSpec("Load_Balancer"), nbSpec("Load_Balancer_Group"),
+	nbSpec("Load_Balancer"),
+	{Name: "Load_Balancer_Group", Column: "name"},
 }
 
 // SBTables are the OVN_Southbound tables counted by table only. Each monitors

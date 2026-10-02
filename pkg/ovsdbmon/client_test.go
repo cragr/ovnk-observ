@@ -588,13 +588,19 @@ func TestMonitorNeverSendsTransact(t *testing.T) {
 }
 
 func TestTableSpecs(t *testing.T) {
-	nb := []string{"ACL", "Port_Group", "Address_Set", "Logical_Switch_Port", "Logical_Switch", "Logical_Router", "Logical_Router_Port", "Load_Balancer", "Load_Balancer_Group"}
+	nb := []TableSpec{}
+	for _, n := range []string{"ACL", "Port_Group", "Address_Set", "Logical_Switch_Port", "Logical_Switch", "Logical_Router", "Logical_Router_Port", "Load_Balancer"} {
+		nb = append(nb, TableSpec{Name: n, Column: "external_ids", KeyFromRow: true})
+	}
+	// NB schema 7.18.0: Load_Balancer_Group has no external_ids column;
+	// monitoring it there makes ovsdb-server reject the whole monitor request.
+	nb = append(nb, TableSpec{Name: "Load_Balancer_Group", Column: "name"})
 	if len(NBTables) != len(nb) {
 		t.Fatalf("NBTables %v", NBTables)
 	}
-	for i, n := range nb {
-		if NBTables[i] != (TableSpec{Name: n, Column: "external_ids", KeyFromRow: true}) {
-			t.Fatalf("NBTables[%d] = %+v", i, NBTables[i])
+	for i := range nb {
+		if NBTables[i] != nb[i] {
+			t.Fatalf("NBTables[%d] = %+v, want %+v", i, NBTables[i], nb[i])
 		}
 	}
 	sb := []TableSpec{
