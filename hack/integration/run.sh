@@ -23,6 +23,7 @@ metadata:
   name: $POD
 spec:
   restartPolicy: Never
+  activeDeadlineSeconds: 600
   containers:
   - name: it
     image: $image
@@ -31,4 +32,8 @@ YAML
 oc wait pod/"$POD" -n "$NS" --for=condition=Ready --timeout=180s
 
 oc cp bin/ovsdbmon.test "$NS/$POD:/tmp/ovsdbmon.test" -c it
-oc exec -n "$NS" "$POD" -c it -- sh -c 'chmod +x /tmp/ovsdbmon.test && /tmp/ovsdbmon.test -test.v -test.run TestMonitorAgainstRealOVSDBServer'
+out=$(mktemp)
+trap 'rm -f "$out"; cleanup' EXIT
+oc exec -n "$NS" "$POD" -c it -- sh -c 'chmod +x /tmp/ovsdbmon.test && /tmp/ovsdbmon.test -test.v -test.run TestMonitorAgainstRealOVSDBServer' | tee "$out"
+# A skipped or missing test must not read as success.
+grep -q -- '--- PASS: TestMonitorAgainstRealOVSDBServer' "$out" || { echo "integration test did not report PASS" >&2; exit 1; }

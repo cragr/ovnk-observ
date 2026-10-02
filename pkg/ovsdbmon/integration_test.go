@@ -59,7 +59,7 @@ func itWait(t *testing.T, d time.Duration, what string, cond func() bool) {
 func TestMonitorAgainstRealOVSDBServer(t *testing.T) {
 	for _, b := range []string{"ovsdb-server", "ovsdb-tool", "ovn-nbctl"} {
 		if _, err := exec.LookPath(b); err != nil {
-			t.Skipf("%s not in PATH", b)
+			t.Fatalf("%s not in PATH (integration test must run where ovsdb tools exist)", b)
 		}
 	}
 	dir := t.TempDir()
