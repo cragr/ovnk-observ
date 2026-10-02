@@ -6,35 +6,42 @@ A prototype OVN-Kubernetes scale exporter and console dashboard for OpenShift. A
 
 A lab with 3,150 MultiNetworkPolicies, each targeting 147 NADs, produced about 464k ACLs and 475k Port_Groups. The NB database grew to roughly 1 GB. Existing OVN-Kubernetes metrics did not show which objects drove that growth. This project adds those metrics.
 
-## Prerequisites
+## Install
 
-- `oc` logged in as cluster-admin
-- Go 1.26 (to build the exporter binary)
-- OpenShift 4.20+ with OVN-Kubernetes in interconnect (IC) mode
+Cluster admins: follow [INSTALL.md](INSTALL.md). It applies one prebuilt manifest, `install/ovnk-observ.yaml`, and needs no build.
 
-## Deploy
+## Develop
+
+Prerequisites: `oc` logged in as cluster-admin, Go 1.26, and podman (for release images only).
 
 ```
-make build            # compile bin/ovnk-observ-exporter (linux/amd64)
-make deploy           # namespace, RBAC, DaemonSet, Deployment, ServiceMonitors, PrometheusRule
-make image-dev        # runs make build, then starts the in-cluster BuildConfig build
-make rules-gen        # regenerate deploy/prometheusrule.yaml from rules/ (only after editing rules)
-make dashboard-apply  # apply the dashboard ConfigMap to openshift-config-managed
+make build                    # compile bin/ovnk-observ-exporter (linux/amd64)
+make test                     # unit tests
+make deploy                   # dev: deploy/ plus the in-cluster BuildConfig (overlays/dev)
+make image-dev                # build the binary, build the image in-cluster, restart the pods
+make rules-gen                # regenerate deploy/prometheusrule.yaml from rules/
+make dashboard                # regenerate dashboards/ and deploy/dashboard-configmap.yaml
+make dashboard-apply          # apply the dashboard ConfigMap to openshift-config-managed
+make undeploy                 # remove everything, including the dashboard
 ```
 
-`make deploy` creates the BuildConfig but does not build the image. Run `make image-dev` after every `make deploy`, including after a `make undeploy`. The pods start once the first build lands in the ImageStream.
+`make deploy` creates the BuildConfig but does not build the image. Run `make image-dev` after the first `make deploy`, and again after any `make undeploy`. The pods start once the first build lands in the ImageStream.
 
-After `make rules-gen`, run `make deploy` again to apply the regenerated rules.
+After `make rules-gen` or `make dashboard`, run `make install-manifest` to refresh the install file, and `make deploy` to apply the change to a dev cluster.
 
 The PriorityClass uses `preemptionPolicy: Never`. The field is immutable, so on a cluster deployed before that change, run `oc delete priorityclass ovnk-observ` before `make deploy`.
 
-## Undeploy
+### Release
 
 ```
-make undeploy
+make image-build              # podman build quay.io/cragr/ovnk-observ-exporter:$(VERSION) and :latest
+make image-push               # push both tags
+make install-manifest         # render install/ovnk-observ.yaml; commit the result
+make verify-install-manifest  # fail if install/ovnk-observ.yaml is stale or not on $(VERSION)
+make deploy-release           # apply install/ovnk-observ.yaml, as an admin would
 ```
 
-This removes the `ovnk-observ` namespace, its ClusterRoles and ClusterRoleBindings, the `ovnk-observ` PriorityClass, and the dashboard ConfigMap.
+`VERSION` defaults to `v0.1.0` and `IMG` to `quay.io/cragr/ovnk-observ-exporter`. To cut a release, bump `VERSION` in the Makefile and the image tag in `deploy/node-daemonset.yaml` and `deploy/cluster-deployment.yaml`, then run `make install-manifest`. `make verify-install-manifest` catches a mismatch.
 
 ## Metrics
 
@@ -84,6 +91,6 @@ Run on 2026-10-02 against the lab cluster (3,150 MNPs in `<repro-namespace>`, 14
 - ACL dropped by the same 1,470.
 - The 10 MNPs were restored from the backup with server-set fields stripped. MNP count returned to 3,150, and each restored policy's `policy-for` annotation matched the saved copy.
 
-**Undeploy and redeploy.** `make undeploy` removed the namespace, ClusterRoles, ClusterRoleBindings, PriorityClass, and dashboard ConfigMap. The ClusterRoles were confirmed absent by listing them, not by a NotFound lookup. After `make deploy`, `make image`, and `make dashboard-apply`, all pods rolled out. `hack/verify-counts.sh` matched ovsdb-server exactly (ACL 464,102; Port_Group 474,940), and `hack/verify-panels.sh` reported OK=35, EMPTY=0, ERROR=0.
+**Undeploy and redeploy.** `make undeploy` removed the namespace, ClusterRoles, ClusterRoleBindings, PriorityClass, and dashboard ConfigMap. The ClusterRoles were confirmed absent by listing them, not by a NotFound lookup. After `make deploy`, `make image` (now `make image-dev`), and `make dashboard-apply`, all pods rolled out. `hack/verify-counts.sh` matched ovsdb-server exactly (ACL 464,102; Port_Group 474,940), and `hack/verify-panels.sh` reported OK=35, EMPTY=0, ERROR=0.
 
 **Final fix wave.** After the dashboard split (37 panels), the amplification rule fix, the `monitor_canceled` reconnect, and the deploy hardening (read-only socket mount, no service account token on node pods, `preemptionPolicy: Never`), all pods rolled out on the new image. `ovnk_observ_db_connected` was 1 for nb and sb on all 5 nodes, `hack/verify-counts.sh <worker-node>` matched ovsdb-server (ACL 464,102; Port_Group 474,940), and `hack/verify-panels.sh` reported OK=37, EMPTY=0, ERROR=0.
