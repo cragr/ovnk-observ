@@ -4,7 +4,7 @@ HOST_ARCH := $(shell go env GOARCH)
 
 NODE ?= <worker-node>
 
-.PHONY: build test tools image deploy undeploy verify-counts integration rules-test rules-gen
+.PHONY: build test tools image deploy undeploy verify-counts integration rules-test rules-gen dashboard dashboard-apply verify-panels
 
 build:
 	CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -o bin/ovnk-observ-exporter ./cmd/ovnk-observ-exporter
@@ -29,6 +29,7 @@ deploy:
 	oc apply -k deploy/
 
 undeploy:
+	oc delete -f deploy/dashboard-configmap.yaml --ignore-not-found
 	oc delete -k deploy/ --ignore-not-found
 
 verify-counts:
@@ -55,3 +56,13 @@ rules-gen:
 	  echo "spec:"; \
 	  sed 's/^/  /' rules/ovnk-observ-rules.yaml; \
 	} > deploy/prometheusrule.yaml
+
+# The dashboard ConfigMap lives in openshift-config-managed, outside the kustomize tree.
+dashboard:
+	go run ./hack/dashgen -out dashboards/ -configmap deploy/dashboard-configmap.yaml
+
+dashboard-apply:
+	oc apply -f deploy/dashboard-configmap.yaml
+
+verify-panels:
+	hack/verify-panels.sh

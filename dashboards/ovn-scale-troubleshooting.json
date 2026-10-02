@@ -1,0 +1,1857 @@
+{
+  "title": "Networking / OVN-Kubernetes Scale & Troubleshooting",
+  "uid": "ovnk-scale-troubleshooting",
+  "tags": [
+    "networking",
+    "ovn-kubernetes",
+    "ovnk-observ"
+  ],
+  "editable": false,
+  "refresh": "1m",
+  "schemaVersion": 14,
+  "timezone": "UTC",
+  "time": {
+    "from": "now-1h",
+    "to": "now"
+  },
+  "templating": {
+    "list": [
+      {
+        "name": "datasource",
+        "label": "Data source",
+        "type": "datasource",
+        "query": "prometheus",
+        "refresh": 1,
+        "hide": 0,
+        "includeAll": false,
+        "multi": false,
+        "regex": "",
+        "current": {
+          "text": "default",
+          "value": "default",
+          "selected": false
+        },
+        "options": []
+      },
+      {
+        "name": "node",
+        "type": "query",
+        "datasource": "$datasource",
+        "query": "label_values(ovnkube_controller_nb_db_objects, node)",
+        "refresh": 2,
+        "hide": 0,
+        "includeAll": true,
+        "allValue": ".*",
+        "multi": false,
+        "sort": 1,
+        "regex": "",
+        "current": {
+          "text": "All",
+          "value": "$__all",
+          "selected": false
+        },
+        "options": []
+      },
+      {
+        "name": "network",
+        "type": "query",
+        "datasource": "$datasource",
+        "query": "label_values(ovnkube_controller_nb_db_objects, network)",
+        "refresh": 2,
+        "hide": 0,
+        "includeAll": true,
+        "allValue": ".*",
+        "multi": false,
+        "sort": 1,
+        "regex": "",
+        "current": {
+          "text": "All",
+          "value": "$__all",
+          "selected": false
+        },
+        "options": []
+      },
+      {
+        "name": "interval",
+        "type": "interval",
+        "query": "1m,5m,15m",
+        "refresh": 0,
+        "hide": 0,
+        "includeAll": false,
+        "multi": false,
+        "regex": "",
+        "current": {
+          "text": "5m",
+          "value": "5m",
+          "selected": true
+        },
+        "options": [
+          {
+            "text": "1m",
+            "value": "1m",
+            "selected": false
+          },
+          {
+            "text": "5m",
+            "value": "5m",
+            "selected": true
+          },
+          {
+            "text": "15m",
+            "value": "15m",
+            "selected": false
+          }
+        ]
+      }
+    ]
+  },
+  "links": [
+    {
+      "title": "Networking / Infrastructure",
+      "type": "link",
+      "url": "/monitoring/dashboards/grafana-dashboard-ovn-health",
+      "icon": "dashboard",
+      "tooltip": "OVN health overview",
+      "keepTime": true,
+      "targetBlank": false
+    }
+  ],
+  "rows": [
+    {
+      "title": "At a glance",
+      "collapse": false,
+      "height": "250px",
+      "showTitle": true,
+      "panels": [
+        {
+          "id": 1,
+          "title": "Max NB ACLs on a node",
+          "type": "singlestat",
+          "span": 2,
+          "datasource": "$datasource",
+          "targets": [
+            {
+              "expr": "ovnk:nb_db_objects:max_by_table{table=\"ACL\"}",
+              "legendFormat": "",
+              "refId": "A"
+            }
+          ],
+          "format": "short",
+          "valueName": "current",
+          "sparkline": {
+            "show": false
+          }
+        },
+        {
+          "id": 2,
+          "title": "Max NB PortGroups on a node",
+          "type": "singlestat",
+          "span": 2,
+          "datasource": "$datasource",
+          "targets": [
+            {
+              "expr": "ovnk:nb_db_objects:max_by_table{table=\"Port_Group\"}",
+              "legendFormat": "",
+              "refId": "A"
+            }
+          ],
+          "format": "short",
+          "valueName": "current",
+          "sparkline": {
+            "show": false
+          }
+        },
+        {
+          "id": 3,
+          "title": "Largest NB DB",
+          "type": "singlestat",
+          "span": 2,
+          "datasource": "$datasource",
+          "targets": [
+            {
+              "expr": "max(ovn_db_db_size_bytes{db_name=\"OVN_Northbound\"})",
+              "legendFormat": "",
+              "refId": "A"
+            }
+          ],
+          "format": "bytes",
+          "valueName": "current",
+          "sparkline": {
+            "show": false
+          }
+        },
+        {
+          "id": 4,
+          "title": "PortGroup amplification",
+          "type": "gauge",
+          "span": 2,
+          "datasource": "$datasource",
+          "targets": [
+            {
+              "expr": "ovnk:portgroup_amplification:ratio",
+              "legendFormat": "",
+              "refId": "A"
+            }
+          ],
+          "format": "short",
+          "thresholds": "5,10",
+          "colors": [
+            "rgba(50, 172, 45, 0.97)",
+            "rgba(237, 129, 40, 0.89)",
+            "rgba(245, 54, 54, 0.9)"
+          ],
+          "colorValue": true,
+          "valueName": "current",
+          "decimals": 0,
+          "gauge": {
+            "minValue": 0,
+            "maxValue": 200,
+            "show": true,
+            "thresholdLabels": false,
+            "thresholdMarkers": true
+          },
+          "options": {
+            "fieldOptions": {
+              "thresholds": [
+                {
+                  "color": "green",
+                  "value": null
+                },
+                {
+                  "color": "yellow",
+                  "value": 5
+                },
+                {
+                  "color": "red",
+                  "value": 10
+                }
+              ]
+            }
+          },
+          "sparkline": {
+            "show": false
+          }
+        },
+        {
+          "id": 5,
+          "title": "Network programming p99",
+          "type": "singlestat",
+          "span": 2,
+          "datasource": "$datasource",
+          "targets": [
+            {
+              "expr": "ovnk:network_programming:p99_5m",
+              "legendFormat": "",
+              "refId": "A"
+            }
+          ],
+          "format": "s",
+          "thresholds": "2,10",
+          "colors": [
+            "rgba(50, 172, 45, 0.97)",
+            "rgba(237, 129, 40, 0.89)",
+            "rgba(245, 54, 54, 0.9)"
+          ],
+          "colorValue": true,
+          "valueName": "current",
+          "sparkline": {
+            "show": false
+          }
+        },
+        {
+          "id": 6,
+          "title": "Retry failures 15m",
+          "type": "singlestat",
+          "span": 1,
+          "datasource": "$datasource",
+          "targets": [
+            {
+              "expr": "sum(increase(ovnkube_resource_retry_failures_total[15m]))",
+              "legendFormat": "",
+              "refId": "A"
+            }
+          ],
+          "format": "short",
+          "valueName": "current",
+          "sparkline": {
+            "show": false
+          }
+        },
+        {
+          "id": 7,
+          "title": "Nodes disconnected",
+          "type": "singlestat",
+          "span": 1,
+          "datasource": "$datasource",
+          "targets": [
+            {
+              "expr": "count(ovn_northd_nb_connection_status == 0 or ovn_northd_sb_connection_status == 0 or ovn_controller_southbound_database_connected == 0) or vector(0)",
+              "legendFormat": "",
+              "refId": "A"
+            }
+          ],
+          "format": "short",
+          "thresholds": "1,1",
+          "colors": [
+            "rgba(50, 172, 45, 0.97)",
+            "rgba(237, 129, 40, 0.89)",
+            "rgba(245, 54, 54, 0.9)"
+          ],
+          "colorValue": true,
+          "valueName": "current",
+          "sparkline": {
+            "show": false
+          }
+        }
+      ]
+    },
+    {
+      "title": "Scale & inventory",
+      "collapse": false,
+      "height": "250px",
+      "showTitle": true,
+      "panels": [
+        {
+          "id": 8,
+          "title": "Kubernetes network objects",
+          "type": "graph",
+          "span": 6,
+          "datasource": "$datasource",
+          "targets": [
+            {
+              "expr": "sum by (managed_by) (max without (instance, pod, endpoint, container, service) (ovnkube_clustermanager_network_attachment_definitions))",
+              "legendFormat": "NADs ({{managed_by}})",
+              "refId": "A"
+            },
+            {
+              "expr": "sum(max without (instance, pod, endpoint, container, service) (ovnkube_clustermanager_multi_network_policies))",
+              "legendFormat": "MultiNetworkPolicies",
+              "refId": "B"
+            },
+            {
+              "expr": "sum(max without (instance, pod, endpoint, container, service) (ovnkube_clustermanager_multi_network_policy_network_targets))",
+              "legendFormat": "MultiNetworkPolicy network targets",
+              "refId": "C"
+            },
+            {
+              "expr": "sum(max without (instance, pod, endpoint, container, service) (ovnkube_clustermanager_network_policies))",
+              "legendFormat": "NetworkPolicies",
+              "refId": "D"
+            },
+            {
+              "expr": "sum by (kind) (max without (instance, pod, endpoint, container, service) (ovnkube_clustermanager_user_defined_networks))",
+              "legendFormat": "{{kind}}",
+              "refId": "E"
+            }
+          ],
+          "lines": true,
+          "linewidth": 1,
+          "fill": 1,
+          "nullPointMode": "null",
+          "legend": {
+            "show": true,
+            "alignAsTable": false,
+            "rightSide": false,
+            "current": false,
+            "max": false,
+            "values": false
+          },
+          "tooltip": {
+            "shared": true,
+            "sort": 2,
+            "value_type": "individual"
+          },
+          "xaxis": {
+            "mode": "time",
+            "show": true
+          },
+          "yaxes": [
+            {
+              "format": "short",
+              "logBase": 1,
+              "min": 0,
+              "show": true
+            },
+            {
+              "format": "short",
+              "logBase": 1,
+              "show": false
+            }
+          ]
+        },
+        {
+          "id": 9,
+          "title": "NB objects per node by table",
+          "type": "graph",
+          "span": 6,
+          "datasource": "$datasource",
+          "targets": [
+            {
+              "expr": "ovnk:nb_db_objects:sum_by_node_table{node=~\"$node\"}",
+              "legendFormat": "{{node}} {{table}}",
+              "refId": "A"
+            }
+          ],
+          "lines": true,
+          "linewidth": 1,
+          "fill": 1,
+          "nullPointMode": "null",
+          "legend": {
+            "show": true,
+            "alignAsTable": false,
+            "rightSide": false,
+            "current": false,
+            "max": false,
+            "values": false
+          },
+          "tooltip": {
+            "shared": true,
+            "sort": 2,
+            "value_type": "individual"
+          },
+          "xaxis": {
+            "mode": "time",
+            "show": true
+          },
+          "yaxes": [
+            {
+              "format": "short",
+              "logBase": 1,
+              "min": 0,
+              "show": true
+            },
+            {
+              "format": "short",
+              "logBase": 1,
+              "show": false
+            }
+          ]
+        },
+        {
+          "id": 10,
+          "title": "Top networks by ACL / PortGroup",
+          "type": "table",
+          "span": 4,
+          "datasource": "$datasource",
+          "targets": [
+            {
+              "expr": "topk(15, ovnk:nb_db_objects:max_by_network_table{table=~\"ACL|Port_Group\",network=~\"$network\"})",
+              "legendFormat": "",
+              "refId": "A",
+              "instant": true,
+              "format": "table"
+            }
+          ],
+          "styles": [
+            {
+              "alias": "Time",
+              "pattern": "Time",
+              "type": "hidden",
+              "decimals": 0,
+              "dateFormat": "YYYY-MM-DD HH:mm:ss"
+            },
+            {
+              "alias": "network",
+              "pattern": "network",
+              "type": "string",
+              "decimals": 0
+            },
+            {
+              "alias": "table",
+              "pattern": "table",
+              "type": "string",
+              "decimals": 0
+            },
+            {
+              "alias": "Objects (max over nodes)",
+              "pattern": "Value #A",
+              "type": "number",
+              "unit": "short",
+              "decimals": 2
+            },
+            {
+              "alias": "",
+              "pattern": "/.*/",
+              "type": "hidden",
+              "decimals": 0
+            }
+          ],
+          "transform": "table"
+        },
+        {
+          "id": 11,
+          "title": "NB ACL vs SB Logical_Flow",
+          "type": "graph",
+          "span": 4,
+          "datasource": "$datasource",
+          "targets": [
+            {
+              "expr": "ovnk:nb_db_objects:sum_by_node_table{table=\"ACL\",node=~\"$node\"}",
+              "legendFormat": "{{node}} NB ACL",
+              "refId": "A"
+            },
+            {
+              "expr": "sum by (node) (ovnkube_controller_sb_db_objects{table=\"Logical_Flow\",node=~\"$node\"})",
+              "legendFormat": "{{node}} SB Logical_Flow",
+              "refId": "B"
+            }
+          ],
+          "lines": true,
+          "linewidth": 1,
+          "fill": 1,
+          "nullPointMode": "null",
+          "legend": {
+            "show": true,
+            "alignAsTable": false,
+            "rightSide": false,
+            "current": false,
+            "max": false,
+            "values": false
+          },
+          "tooltip": {
+            "shared": true,
+            "sort": 2,
+            "value_type": "individual"
+          },
+          "xaxis": {
+            "mode": "time",
+            "show": true
+          },
+          "yaxes": [
+            {
+              "format": "short",
+              "logBase": 1,
+              "min": 0,
+              "show": true
+            },
+            {
+              "format": "short",
+              "logBase": 1,
+              "show": false
+            }
+          ]
+        },
+        {
+          "id": 12,
+          "title": "ACLs by owner type",
+          "type": "graph",
+          "span": 4,
+          "datasource": "$datasource",
+          "targets": [
+            {
+              "expr": "sum by (owner_type) (ovnkube_controller_nb_db_objects{table=\"ACL\",node=~\"$node\",network=~\"$network\"})",
+              "legendFormat": "{{owner_type}}",
+              "refId": "A"
+            }
+          ],
+          "lines": true,
+          "linewidth": 1,
+          "fill": 1,
+          "nullPointMode": "null",
+          "legend": {
+            "show": true,
+            "alignAsTable": false,
+            "rightSide": false,
+            "current": false,
+            "max": false,
+            "values": false
+          },
+          "tooltip": {
+            "shared": true,
+            "sort": 2,
+            "value_type": "individual"
+          },
+          "xaxis": {
+            "mode": "time",
+            "show": true
+          },
+          "yaxes": [
+            {
+              "format": "short",
+              "logBase": 1,
+              "min": 0,
+              "show": true
+            },
+            {
+              "format": "short",
+              "logBase": 1,
+              "show": false
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "title": "Programming latency & backlog",
+      "collapse": false,
+      "height": "250px",
+      "showTitle": true,
+      "panels": [
+        {
+          "id": 13,
+          "title": "Network programming p50/p99",
+          "type": "graph",
+          "span": 6,
+          "datasource": "$datasource",
+          "targets": [
+            {
+              "expr": "histogram_quantile(0.5, sum by (le) (rate(ovnkube_controller_network_programming_duration_seconds_bucket[$interval])))",
+              "legendFormat": "p50",
+              "refId": "A"
+            },
+            {
+              "expr": "histogram_quantile(0.99, sum by (le) (rate(ovnkube_controller_network_programming_duration_seconds_bucket[$interval])))",
+              "legendFormat": "p99",
+              "refId": "B"
+            },
+            {
+              "expr": "histogram_quantile(0.99, sum by (le) (rate(ovnkube_controller_network_programming_ovn_duration_seconds_bucket[$interval])))",
+              "legendFormat": "p99 OVN part",
+              "refId": "C"
+            }
+          ],
+          "lines": true,
+          "linewidth": 1,
+          "fill": 1,
+          "nullPointMode": "null",
+          "legend": {
+            "show": true,
+            "alignAsTable": false,
+            "rightSide": false,
+            "current": false,
+            "max": false,
+            "values": false
+          },
+          "tooltip": {
+            "shared": true,
+            "sort": 2,
+            "value_type": "individual"
+          },
+          "xaxis": {
+            "mode": "time",
+            "show": true
+          },
+          "yaxes": [
+            {
+              "format": "s",
+              "logBase": 1,
+              "min": 0,
+              "show": true
+            },
+            {
+              "format": "short",
+              "logBase": 1,
+              "show": false
+            }
+          ]
+        },
+        {
+          "id": 14,
+          "title": "Resource add/update/delete p99",
+          "type": "graph",
+          "span": 6,
+          "datasource": "$datasource",
+          "targets": [
+            {
+              "expr": "histogram_quantile(0.99, sum by (le) (rate(ovnkube_controller_resource_add_latency_seconds_bucket[$interval]) * on (namespace, pod) group_left(node) max by (namespace, pod, node) (kube_pod_info{node=~\"$node\"})))",
+              "legendFormat": "add",
+              "refId": "A"
+            },
+            {
+              "expr": "histogram_quantile(0.99, sum by (le) (rate(ovnkube_controller_resource_update_latency_seconds_bucket[$interval]) * on (namespace, pod) group_left(node) max by (namespace, pod, node) (kube_pod_info{node=~\"$node\"})))",
+              "legendFormat": "update",
+              "refId": "B"
+            },
+            {
+              "expr": "histogram_quantile(0.99, sum by (le) (rate(ovnkube_controller_resource_delete_latency_seconds_bucket[$interval]) * on (namespace, pod) group_left(node) max by (namespace, pod, node) (kube_pod_info{node=~\"$node\"})))",
+              "legendFormat": "delete",
+              "refId": "C"
+            }
+          ],
+          "lines": true,
+          "linewidth": 1,
+          "fill": 1,
+          "nullPointMode": "null",
+          "legend": {
+            "show": true,
+            "alignAsTable": false,
+            "rightSide": false,
+            "current": false,
+            "max": false,
+            "values": false
+          },
+          "tooltip": {
+            "shared": true,
+            "sort": 2,
+            "value_type": "individual"
+          },
+          "xaxis": {
+            "mode": "time",
+            "show": true
+          },
+          "yaxes": [
+            {
+              "format": "s",
+              "logBase": 1,
+              "min": 0,
+              "show": true
+            },
+            {
+              "format": "short",
+              "logBase": 1,
+              "show": false
+            }
+          ]
+        },
+        {
+          "id": 15,
+          "title": "Pod setup pipeline p99",
+          "type": "graph",
+          "span": 4,
+          "datasource": "$datasource",
+          "targets": [
+            {
+              "expr": "ovnk:pod_setup_stage:p99_5m",
+              "legendFormat": "{{stage}}",
+              "refId": "A"
+            }
+          ],
+          "lines": true,
+          "linewidth": 1,
+          "fill": 3,
+          "stack": true,
+          "nullPointMode": "null",
+          "legend": {
+            "show": true,
+            "alignAsTable": false,
+            "rightSide": false,
+            "current": false,
+            "max": false,
+            "values": false
+          },
+          "tooltip": {
+            "shared": true,
+            "sort": 2,
+            "value_type": "individual"
+          },
+          "xaxis": {
+            "mode": "time",
+            "show": true
+          },
+          "yaxes": [
+            {
+              "format": "s",
+              "logBase": 1,
+              "min": 0,
+              "show": true
+            },
+            {
+              "format": "short",
+              "logBase": 1,
+              "show": false
+            }
+          ]
+        },
+        {
+          "id": 16,
+          "title": "Retry failures by node",
+          "type": "graph",
+          "span": 4,
+          "datasource": "$datasource",
+          "targets": [
+            {
+              "expr": "sum by (node) (rate(ovnkube_resource_retry_failures_total[$interval]) * on (namespace, pod) group_left(node) max by (namespace, pod, node) (kube_pod_info{node=~\"$node\"}))",
+              "legendFormat": "{{node}}",
+              "refId": "A"
+            }
+          ],
+          "lines": true,
+          "linewidth": 1,
+          "fill": 1,
+          "nullPointMode": "null",
+          "legend": {
+            "show": true,
+            "alignAsTable": false,
+            "rightSide": false,
+            "current": false,
+            "max": false,
+            "values": false
+          },
+          "tooltip": {
+            "shared": true,
+            "sort": 2,
+            "value_type": "individual"
+          },
+          "xaxis": {
+            "mode": "time",
+            "show": true
+          },
+          "yaxes": [
+            {
+              "format": "short",
+              "logBase": 1,
+              "min": 0,
+              "show": true
+            },
+            {
+              "format": "short",
+              "logBase": 1,
+              "show": false
+            }
+          ]
+        },
+        {
+          "id": 17,
+          "title": "NB→SB lag / probe staleness",
+          "type": "graph",
+          "span": 4,
+          "datasource": "$datasource",
+          "targets": [
+            {
+              "expr": "ovnk:nb_sb_e2e_lag_seconds{node=~\"$node\"}",
+              "legendFormat": "{{node}} NB→SB lag",
+              "refId": "A"
+            },
+            {
+              "expr": "ovnk:e2e_probe_staleness_seconds{node=~\"$node\"}",
+              "legendFormat": "{{node}} probe staleness",
+              "refId": "B"
+            }
+          ],
+          "lines": true,
+          "linewidth": 1,
+          "fill": 1,
+          "nullPointMode": "null",
+          "legend": {
+            "show": true,
+            "alignAsTable": false,
+            "rightSide": false,
+            "current": false,
+            "max": false,
+            "values": false
+          },
+          "tooltip": {
+            "shared": true,
+            "sort": 2,
+            "value_type": "individual"
+          },
+          "xaxis": {
+            "mode": "time",
+            "show": true
+          },
+          "yaxes": [
+            {
+              "format": "s",
+              "logBase": 1,
+              "min": 0,
+              "show": true
+            },
+            {
+              "format": "short",
+              "logBase": 1,
+              "show": false
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "title": "NB/SB DB health",
+      "collapse": false,
+      "height": "250px",
+      "showTitle": true,
+      "panels": [
+        {
+          "id": 18,
+          "title": "DB size",
+          "type": "graph",
+          "span": 6,
+          "datasource": "$datasource",
+          "targets": [
+            {
+              "expr": "ovn_db_db_size_bytes * on (namespace, pod) group_left(node) max by (namespace, pod, node) (kube_pod_info{node=~\"$node\"})",
+              "legendFormat": "{{node}} {{db_name}}",
+              "refId": "A"
+            }
+          ],
+          "lines": true,
+          "linewidth": 1,
+          "fill": 1,
+          "nullPointMode": "null",
+          "legend": {
+            "show": true,
+            "alignAsTable": false,
+            "rightSide": false,
+            "current": false,
+            "max": false,
+            "values": false
+          },
+          "tooltip": {
+            "shared": true,
+            "sort": 2,
+            "value_type": "individual"
+          },
+          "xaxis": {
+            "mode": "time",
+            "show": true
+          },
+          "yaxes": [
+            {
+              "format": "bytes",
+              "logBase": 1,
+              "min": 0,
+              "show": true
+            },
+            {
+              "format": "short",
+              "logBase": 1,
+              "show": false
+            }
+          ]
+        },
+        {
+          "id": 19,
+          "title": "DB growth per hour",
+          "type": "graph",
+          "span": 6,
+          "datasource": "$datasource",
+          "targets": [
+            {
+              "expr": "ovnk:ovn_db_size_bytes:deriv_30m{node=~\"$node\"} * 3600",
+              "legendFormat": "{{node}} {{db_name}}",
+              "refId": "A"
+            }
+          ],
+          "lines": true,
+          "linewidth": 1,
+          "fill": 1,
+          "nullPointMode": "null",
+          "legend": {
+            "show": true,
+            "alignAsTable": false,
+            "rightSide": false,
+            "current": false,
+            "max": false,
+            "values": false
+          },
+          "tooltip": {
+            "shared": true,
+            "sort": 2,
+            "value_type": "individual"
+          },
+          "xaxis": {
+            "mode": "time",
+            "show": true
+          },
+          "yaxes": [
+            {
+              "format": "bytes",
+              "logBase": 1,
+              "min": 0,
+              "show": true
+            },
+            {
+              "format": "short",
+              "logBase": 1,
+              "show": false
+            }
+          ]
+        },
+        {
+          "id": 20,
+          "title": "nbdb/sbdb CPU",
+          "type": "graph",
+          "span": 4,
+          "datasource": "$datasource",
+          "targets": [
+            {
+              "expr": "sum by (node, container) (rate(container_cpu_usage_seconds_total{namespace=\"openshift-ovn-kubernetes\",container=~\"nbdb|sbdb\",node=~\"$node\"}[$interval]))",
+              "legendFormat": "{{node}} {{container}}",
+              "refId": "A"
+            }
+          ],
+          "lines": true,
+          "linewidth": 1,
+          "fill": 1,
+          "nullPointMode": "null",
+          "legend": {
+            "show": true,
+            "alignAsTable": false,
+            "rightSide": false,
+            "current": false,
+            "max": false,
+            "values": false
+          },
+          "tooltip": {
+            "shared": true,
+            "sort": 2,
+            "value_type": "individual"
+          },
+          "xaxis": {
+            "mode": "time",
+            "show": true
+          },
+          "yaxes": [
+            {
+              "format": "short",
+              "logBase": 1,
+              "min": 0,
+              "show": true
+            },
+            {
+              "format": "short",
+              "logBase": 1,
+              "show": false
+            }
+          ]
+        },
+        {
+          "id": 21,
+          "title": "nbdb/sbdb RSS",
+          "type": "graph",
+          "span": 4,
+          "datasource": "$datasource",
+          "targets": [
+            {
+              "expr": "sum by (node, container) (container_memory_rss{namespace=\"openshift-ovn-kubernetes\",container=~\"nbdb|sbdb\",node=~\"$node\"})",
+              "legendFormat": "{{node}} {{container}}",
+              "refId": "A"
+            }
+          ],
+          "lines": true,
+          "linewidth": 1,
+          "fill": 1,
+          "nullPointMode": "null",
+          "legend": {
+            "show": true,
+            "alignAsTable": false,
+            "rightSide": false,
+            "current": false,
+            "max": false,
+            "values": false
+          },
+          "tooltip": {
+            "shared": true,
+            "sort": 2,
+            "value_type": "individual"
+          },
+          "xaxis": {
+            "mode": "time",
+            "show": true
+          },
+          "yaxes": [
+            {
+              "format": "bytes",
+              "logBase": 1,
+              "min": 0,
+              "show": true
+            },
+            {
+              "format": "short",
+              "logBase": 1,
+              "show": false
+            }
+          ]
+        },
+        {
+          "id": 22,
+          "title": "Sessions & monitors",
+          "type": "graph",
+          "span": 4,
+          "datasource": "$datasource",
+          "targets": [
+            {
+              "expr": "ovn_db_jsonrpc_server_sessions * on (namespace, pod) group_left(node) max by (namespace, pod, node) (kube_pod_info{node=~\"$node\"})",
+              "legendFormat": "{{node}} {{db_name}} sessions",
+              "refId": "A"
+            },
+            {
+              "expr": "ovn_db_ovsdb_monitors * on (namespace, pod) group_left(node) max by (namespace, pod, node) (kube_pod_info{node=~\"$node\"})",
+              "legendFormat": "{{node}} {{db_name}} monitors",
+              "refId": "B"
+            }
+          ],
+          "lines": true,
+          "linewidth": 1,
+          "fill": 1,
+          "nullPointMode": "null",
+          "legend": {
+            "show": true,
+            "alignAsTable": false,
+            "rightSide": false,
+            "current": false,
+            "max": false,
+            "values": false
+          },
+          "tooltip": {
+            "shared": true,
+            "sort": 2,
+            "value_type": "individual"
+          },
+          "xaxis": {
+            "mode": "time",
+            "show": true
+          },
+          "yaxes": [
+            {
+              "format": "short",
+              "logBase": 1,
+              "min": 0,
+              "show": true
+            },
+            {
+              "format": "short",
+              "logBase": 1,
+              "show": false
+            }
+          ]
+        },
+        {
+          "id": 23,
+          "title": "Connection status",
+          "type": "table",
+          "span": 6,
+          "datasource": "$datasource",
+          "targets": [
+            {
+              "expr": "max by (node) (ovn_northd_nb_connection_status * on (namespace, pod) group_left(node) max by (namespace, pod, node) (kube_pod_info{node=~\"$node\"}))",
+              "legendFormat": "",
+              "refId": "A",
+              "instant": true,
+              "format": "table"
+            },
+            {
+              "expr": "max by (node) (ovn_northd_sb_connection_status * on (namespace, pod) group_left(node) max by (namespace, pod, node) (kube_pod_info{node=~\"$node\"}))",
+              "legendFormat": "",
+              "refId": "B",
+              "instant": true,
+              "format": "table"
+            },
+            {
+              "expr": "max by (node) (ovn_controller_southbound_database_connected * on (namespace, pod) group_left(node) max by (namespace, pod, node) (kube_pod_info{node=~\"$node\"}))",
+              "legendFormat": "",
+              "refId": "C",
+              "instant": true,
+              "format": "table"
+            }
+          ],
+          "styles": [
+            {
+              "alias": "Time",
+              "pattern": "Time",
+              "type": "hidden",
+              "decimals": 0,
+              "dateFormat": "YYYY-MM-DD HH:mm:ss"
+            },
+            {
+              "alias": "node",
+              "pattern": "node",
+              "type": "string",
+              "decimals": 0
+            },
+            {
+              "alias": "northd→NB",
+              "pattern": "Value #A",
+              "type": "number",
+              "unit": "short",
+              "decimals": 2
+            },
+            {
+              "alias": "northd→SB",
+              "pattern": "Value #B",
+              "type": "number",
+              "unit": "short",
+              "decimals": 2
+            },
+            {
+              "alias": "ovn-controller→SB",
+              "pattern": "Value #C",
+              "type": "number",
+              "unit": "short",
+              "decimals": 2
+            },
+            {
+              "alias": "",
+              "pattern": "/.*/",
+              "type": "hidden",
+              "decimals": 0
+            }
+          ],
+          "transform": "table"
+        },
+        {
+          "id": 24,
+          "title": "libovsdb disconnects",
+          "type": "graph",
+          "span": 6,
+          "datasource": "$datasource",
+          "targets": [
+            {
+              "expr": "sum by (node) (rate(ovnkube_master_libovsdb_disconnects_total[$interval]) * on (namespace, pod) group_left(node) max by (namespace, pod, node) (kube_pod_info{node=~\"$node\"}))",
+              "legendFormat": "{{node}}",
+              "refId": "A"
+            }
+          ],
+          "lines": true,
+          "linewidth": 1,
+          "fill": 1,
+          "nullPointMode": "null",
+          "legend": {
+            "show": true,
+            "alignAsTable": false,
+            "rightSide": false,
+            "current": false,
+            "max": false,
+            "values": false
+          },
+          "tooltip": {
+            "shared": true,
+            "sort": 2,
+            "value_type": "individual"
+          },
+          "xaxis": {
+            "mode": "time",
+            "show": true
+          },
+          "yaxes": [
+            {
+              "format": "short",
+              "logBase": 1,
+              "min": 0,
+              "show": true
+            },
+            {
+              "format": "short",
+              "logBase": 1,
+              "show": false
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "title": "Transactions & churn",
+      "collapse": false,
+      "height": "250px",
+      "showTitle": true,
+      "panels": [
+        {
+          "id": 25,
+          "title": "NB update rate by table/op",
+          "type": "graph",
+          "span": 6,
+          "datasource": "$datasource",
+          "targets": [
+            {
+              "expr": "sum by (table, op) (rate(ovnkube_controller_nb_db_updates_total{node=~\"$node\"}[$interval]))",
+              "legendFormat": "{{table}} {{op}}",
+              "refId": "A"
+            }
+          ],
+          "lines": true,
+          "linewidth": 1,
+          "fill": 1,
+          "nullPointMode": "null",
+          "legend": {
+            "show": true,
+            "alignAsTable": false,
+            "rightSide": false,
+            "current": false,
+            "max": false,
+            "values": false
+          },
+          "tooltip": {
+            "shared": true,
+            "sort": 2,
+            "value_type": "individual"
+          },
+          "xaxis": {
+            "mode": "time",
+            "show": true
+          },
+          "yaxes": [
+            {
+              "format": "ops",
+              "logBase": 1,
+              "min": 0,
+              "show": true
+            },
+            {
+              "format": "short",
+              "logBase": 1,
+              "show": false
+            }
+          ]
+        },
+        {
+          "id": 26,
+          "title": "northd txn rate by result",
+          "type": "graph",
+          "span": 6,
+          "datasource": "$datasource",
+          "targets": [
+            {
+              "expr": "sum(rate(ovn_northd_txn_success[$interval]) * on (namespace, pod) group_left(node) max by (namespace, pod, node) (kube_pod_info{node=~\"$node\"}))",
+              "legendFormat": "success",
+              "refId": "A"
+            },
+            {
+              "expr": "sum(rate(ovn_northd_txn_try_again[$interval]) * on (namespace, pod) group_left(node) max by (namespace, pod, node) (kube_pod_info{node=~\"$node\"}))",
+              "legendFormat": "try_again",
+              "refId": "B"
+            },
+            {
+              "expr": "sum(rate(ovn_northd_txn_error[$interval]) * on (namespace, pod) group_left(node) max by (namespace, pod, node) (kube_pod_info{node=~\"$node\"}))",
+              "legendFormat": "error",
+              "refId": "C"
+            },
+            {
+              "expr": "sum(rate(ovn_northd_txn_aborted[$interval]) * on (namespace, pod) group_left(node) max by (namespace, pod, node) (kube_pod_info{node=~\"$node\"}))",
+              "legendFormat": "aborted",
+              "refId": "D"
+            }
+          ],
+          "lines": true,
+          "linewidth": 1,
+          "fill": 1,
+          "nullPointMode": "null",
+          "legend": {
+            "show": true,
+            "alignAsTable": false,
+            "rightSide": false,
+            "current": false,
+            "max": false,
+            "values": false
+          },
+          "tooltip": {
+            "shared": true,
+            "sort": 2,
+            "value_type": "individual"
+          },
+          "xaxis": {
+            "mode": "time",
+            "show": true
+          },
+          "yaxes": [
+            {
+              "format": "ops",
+              "logBase": 1,
+              "min": 0,
+              "show": true
+            },
+            {
+              "format": "short",
+              "logBase": 1,
+              "show": false
+            }
+          ]
+        },
+        {
+          "id": 27,
+          "title": "ovn-controller txn rate by result",
+          "type": "graph",
+          "span": 6,
+          "datasource": "$datasource",
+          "targets": [
+            {
+              "expr": "sum(rate(ovn_controller_txn_success[$interval]) * on (namespace, pod) group_left(node) max by (namespace, pod, node) (kube_pod_info{node=~\"$node\"}))",
+              "legendFormat": "success",
+              "refId": "A"
+            },
+            {
+              "expr": "sum(rate(ovn_controller_txn_try_again[$interval]) * on (namespace, pod) group_left(node) max by (namespace, pod, node) (kube_pod_info{node=~\"$node\"}))",
+              "legendFormat": "try_again",
+              "refId": "B"
+            },
+            {
+              "expr": "sum(rate(ovn_controller_txn_error[$interval]) * on (namespace, pod) group_left(node) max by (namespace, pod, node) (kube_pod_info{node=~\"$node\"}))",
+              "legendFormat": "error",
+              "refId": "C"
+            },
+            {
+              "expr": "sum(rate(ovn_controller_txn_aborted[$interval]) * on (namespace, pod) group_left(node) max by (namespace, pod, node) (kube_pod_info{node=~\"$node\"}))",
+              "legendFormat": "aborted",
+              "refId": "D"
+            }
+          ],
+          "lines": true,
+          "linewidth": 1,
+          "fill": 1,
+          "nullPointMode": "null",
+          "legend": {
+            "show": true,
+            "alignAsTable": false,
+            "rightSide": false,
+            "current": false,
+            "max": false,
+            "values": false
+          },
+          "tooltip": {
+            "shared": true,
+            "sort": 2,
+            "value_type": "individual"
+          },
+          "xaxis": {
+            "mode": "time",
+            "show": true
+          },
+          "yaxes": [
+            {
+              "format": "ops",
+              "logBase": 1,
+              "min": 0,
+              "show": true
+            },
+            {
+              "format": "short",
+              "logBase": 1,
+              "show": false
+            }
+          ]
+        },
+        {
+          "id": 28,
+          "title": "Txn failure ratio",
+          "type": "graph",
+          "span": 6,
+          "datasource": "$datasource",
+          "targets": [
+            {
+              "expr": "ovnk:ovn_txn_failure:ratio_5m{node=~\"$node\"}",
+              "legendFormat": "{{node}} {{component}}",
+              "refId": "A"
+            }
+          ],
+          "lines": true,
+          "linewidth": 1,
+          "fill": 1,
+          "nullPointMode": "null",
+          "legend": {
+            "show": true,
+            "alignAsTable": false,
+            "rightSide": false,
+            "current": false,
+            "max": false,
+            "values": false
+          },
+          "tooltip": {
+            "shared": true,
+            "sort": 2,
+            "value_type": "individual"
+          },
+          "xaxis": {
+            "mode": "time",
+            "show": true
+          },
+          "yaxes": [
+            {
+              "format": "percentunit",
+              "logBase": 1,
+              "min": 0,
+              "show": true
+            },
+            {
+              "format": "short",
+              "logBase": 1,
+              "show": false
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "title": "Recompute cost",
+      "collapse": false,
+      "height": "250px",
+      "showTitle": true,
+      "panels": [
+        {
+          "id": 29,
+          "title": "northd loop p95 / max",
+          "type": "graph",
+          "span": 6,
+          "datasource": "$datasource",
+          "targets": [
+            {
+              "expr": "ovn_northd_ovn_northd_loop_95th_percentile * on (namespace, pod) group_left(node) max by (namespace, pod, node) (kube_pod_info{node=~\"$node\"})",
+              "legendFormat": "{{node}} p95",
+              "refId": "A"
+            },
+            {
+              "expr": "ovn_northd_ovn_northd_loop_maximum * on (namespace, pod) group_left(node) max by (namespace, pod, node) (kube_pod_info{node=~\"$node\"})",
+              "legendFormat": "{{node}} max",
+              "refId": "B"
+            }
+          ],
+          "lines": true,
+          "linewidth": 1,
+          "fill": 1,
+          "nullPointMode": "null",
+          "legend": {
+            "show": true,
+            "alignAsTable": false,
+            "rightSide": false,
+            "current": false,
+            "max": false,
+            "values": false
+          },
+          "tooltip": {
+            "shared": true,
+            "sort": 2,
+            "value_type": "individual"
+          },
+          "xaxis": {
+            "mode": "time",
+            "show": true
+          },
+          "yaxes": [
+            {
+              "format": "ms",
+              "logBase": 1,
+              "min": 0,
+              "show": true
+            },
+            {
+              "format": "short",
+              "logBase": 1,
+              "show": false
+            }
+          ]
+        },
+        {
+          "id": 30,
+          "title": "northd build_lflows / nb_db_run / sb_db_run p95",
+          "type": "graph",
+          "span": 6,
+          "datasource": "$datasource",
+          "targets": [
+            {
+              "expr": "ovn_northd_build_lflows_95th_percentile * on (namespace, pod) group_left(node) max by (namespace, pod, node) (kube_pod_info{node=~\"$node\"})",
+              "legendFormat": "{{node}} build_lflows",
+              "refId": "A"
+            },
+            {
+              "expr": "ovn_northd_ovnnb_db_run_95th_percentile * on (namespace, pod) group_left(node) max by (namespace, pod, node) (kube_pod_info{node=~\"$node\"})",
+              "legendFormat": "{{node}} nb_db_run",
+              "refId": "B"
+            },
+            {
+              "expr": "ovn_northd_ovnsb_db_run_95th_percentile * on (namespace, pod) group_left(node) max by (namespace, pod, node) (kube_pod_info{node=~\"$node\"})",
+              "legendFormat": "{{node}} sb_db_run",
+              "refId": "C"
+            }
+          ],
+          "lines": true,
+          "linewidth": 1,
+          "fill": 1,
+          "nullPointMode": "null",
+          "legend": {
+            "show": true,
+            "alignAsTable": false,
+            "rightSide": false,
+            "current": false,
+            "max": false,
+            "values": false
+          },
+          "tooltip": {
+            "shared": true,
+            "sort": 2,
+            "value_type": "individual"
+          },
+          "xaxis": {
+            "mode": "time",
+            "show": true
+          },
+          "yaxes": [
+            {
+              "format": "ms",
+              "logBase": 1,
+              "min": 0,
+              "show": true
+            },
+            {
+              "format": "short",
+              "logBase": 1,
+              "show": false
+            }
+          ]
+        },
+        {
+          "id": 31,
+          "title": "ovn-controller lflow_run rate",
+          "type": "graph",
+          "span": 4,
+          "datasource": "$datasource",
+          "targets": [
+            {
+              "expr": "rate(ovn_controller_lflow_run[$interval]) * on (namespace, pod) group_left(node) max by (namespace, pod, node) (kube_pod_info{node=~\"$node\"})",
+              "legendFormat": "{{node}}",
+              "refId": "A"
+            }
+          ],
+          "lines": true,
+          "linewidth": 1,
+          "fill": 1,
+          "nullPointMode": "null",
+          "legend": {
+            "show": true,
+            "alignAsTable": false,
+            "rightSide": false,
+            "current": false,
+            "max": false,
+            "values": false
+          },
+          "tooltip": {
+            "shared": true,
+            "sort": 2,
+            "value_type": "individual"
+          },
+          "xaxis": {
+            "mode": "time",
+            "show": true
+          },
+          "yaxes": [
+            {
+              "format": "ops",
+              "logBase": 1,
+              "min": 0,
+              "show": true
+            },
+            {
+              "format": "short",
+              "logBase": 1,
+              "show": false
+            }
+          ]
+        },
+        {
+          "id": 32,
+          "title": "Flow generation / installation p95",
+          "type": "graph",
+          "span": 4,
+          "datasource": "$datasource",
+          "targets": [
+            {
+              "expr": "ovn_controller_flow_generation_95th_percentile * on (namespace, pod) group_left(node) max by (namespace, pod, node) (kube_pod_info{node=~\"$node\"})",
+              "legendFormat": "{{node}} generation",
+              "refId": "A"
+            },
+            {
+              "expr": "ovn_controller_flow_installation_95th_percentile * on (namespace, pod) group_left(node) max by (namespace, pod, node) (kube_pod_info{node=~\"$node\"})",
+              "legendFormat": "{{node}} installation",
+              "refId": "B"
+            }
+          ],
+          "lines": true,
+          "linewidth": 1,
+          "fill": 1,
+          "nullPointMode": "null",
+          "legend": {
+            "show": true,
+            "alignAsTable": false,
+            "rightSide": false,
+            "current": false,
+            "max": false,
+            "values": false
+          },
+          "tooltip": {
+            "shared": true,
+            "sort": 2,
+            "value_type": "individual"
+          },
+          "xaxis": {
+            "mode": "time",
+            "show": true
+          },
+          "yaxes": [
+            {
+              "format": "ms",
+              "logBase": 1,
+              "min": 0,
+              "show": true
+            },
+            {
+              "format": "short",
+              "logBase": 1,
+              "show": false
+            }
+          ]
+        },
+        {
+          "id": 33,
+          "title": "br-int OpenFlow count",
+          "type": "graph",
+          "span": 4,
+          "datasource": "$datasource",
+          "targets": [
+            {
+              "expr": "ovn_controller_integration_bridge_openflow_total * on (namespace, pod) group_left(node) max by (namespace, pod, node) (kube_pod_info{node=~\"$node\"})",
+              "legendFormat": "{{node}}",
+              "refId": "A"
+            }
+          ],
+          "lines": true,
+          "linewidth": 1,
+          "fill": 1,
+          "nullPointMode": "null",
+          "legend": {
+            "show": true,
+            "alignAsTable": false,
+            "rightSide": false,
+            "current": false,
+            "max": false,
+            "values": false
+          },
+          "tooltip": {
+            "shared": true,
+            "sort": 2,
+            "value_type": "individual"
+          },
+          "xaxis": {
+            "mode": "time",
+            "show": true
+          },
+          "yaxes": [
+            {
+              "format": "short",
+              "logBase": 1,
+              "min": 0,
+              "show": true
+            },
+            {
+              "format": "short",
+              "logBase": 1,
+              "show": false
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "title": "Exporter self-cost",
+      "collapse": true,
+      "height": "250px",
+      "showTitle": true,
+      "panels": [
+        {
+          "id": 34,
+          "title": "Exporter CPU / RSS",
+          "type": "graph",
+          "span": 6,
+          "datasource": "$datasource",
+          "targets": [
+            {
+              "expr": "sum by (node) (rate(container_cpu_usage_seconds_total{namespace=\"ovnk-observ\",container=\"exporter\"}[$interval]))",
+              "legendFormat": "{{node}} CPU cores",
+              "refId": "A"
+            },
+            {
+              "expr": "sum by (node) (container_memory_working_set_bytes{namespace=\"ovnk-observ\",container=\"exporter\"})",
+              "legendFormat": "{{node}} working set bytes",
+              "refId": "B"
+            }
+          ],
+          "lines": true,
+          "linewidth": 1,
+          "fill": 1,
+          "nullPointMode": "null",
+          "legend": {
+            "show": true,
+            "alignAsTable": false,
+            "rightSide": false,
+            "current": false,
+            "max": false,
+            "values": false
+          },
+          "tooltip": {
+            "shared": true,
+            "sort": 2,
+            "value_type": "individual"
+          },
+          "xaxis": {
+            "mode": "time",
+            "show": true
+          },
+          "yaxes": [
+            {
+              "format": "short",
+              "logBase": 1,
+              "min": 0,
+              "show": true
+            },
+            {
+              "format": "short",
+              "logBase": 1,
+              "show": false
+            }
+          ]
+        },
+        {
+          "id": 35,
+          "title": "DB connected / initial sync",
+          "type": "table",
+          "span": 6,
+          "datasource": "$datasource",
+          "targets": [
+            {
+              "expr": "max by (node, db) (ovnk_observ_db_connected)",
+              "legendFormat": "",
+              "refId": "A",
+              "instant": true,
+              "format": "table"
+            },
+            {
+              "expr": "max by (node, db) (ovnk_observ_initial_sync_seconds)",
+              "legendFormat": "",
+              "refId": "B",
+              "instant": true,
+              "format": "table"
+            }
+          ],
+          "styles": [
+            {
+              "alias": "Time",
+              "pattern": "Time",
+              "type": "hidden",
+              "decimals": 0,
+              "dateFormat": "YYYY-MM-DD HH:mm:ss"
+            },
+            {
+              "alias": "node",
+              "pattern": "node",
+              "type": "string",
+              "decimals": 0
+            },
+            {
+              "alias": "db",
+              "pattern": "db",
+              "type": "string",
+              "decimals": 0
+            },
+            {
+              "alias": "Connected",
+              "pattern": "Value #A",
+              "type": "number",
+              "unit": "short",
+              "decimals": 2
+            },
+            {
+              "alias": "Initial sync (s)",
+              "pattern": "Value #B",
+              "type": "number",
+              "unit": "short",
+              "decimals": 2
+            },
+            {
+              "alias": "",
+              "pattern": "/.*/",
+              "type": "hidden",
+              "decimals": 0
+            }
+          ],
+          "transform": "table"
+        }
+      ]
+    }
+  ]
+}
