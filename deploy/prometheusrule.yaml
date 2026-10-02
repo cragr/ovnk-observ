@@ -22,7 +22,7 @@ spec:
             max by (network, table) (sum by (node, network, table) (ovnkube_controller_nb_db_objects))
         - record: ovnk:portgroup_amplification:ratio
           expr: |-
-            max(sum by (node) (ovnkube_controller_nb_db_objects{table="Port_Group",owner_type="NetworkPolicy"})) / clamp_min(sum(max without (instance, pod, endpoint, container, service) (ovnkube_clustermanager_multi_network_policies)) + sum(max without (instance, pod, endpoint, container, service) (ovnkube_clustermanager_network_policies)), 1)
+            max(sum by (node) (ovnkube_controller_nb_db_objects{table="Port_Group",owner_type="NetworkPolicy"})) / clamp_min((sum(max without (instance, pod, endpoint, container, service) (ovnkube_clustermanager_multi_network_policies)) or vector(0)) + (sum(max without (instance, pod, endpoint, container, service) (ovnkube_clustermanager_network_policies)) or vector(0)), 1)
         - record: ovnk:nb_sb_effectiveness:ratio
           expr: |-
             sum by (node) (ovnkube_controller_sb_db_objects{table="Logical_Flow"}) / clamp_min(sum by (node) (ovnkube_controller_nb_db_objects{table="ACL"}), 1)

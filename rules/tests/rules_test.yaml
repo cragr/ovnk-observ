@@ -71,6 +71,35 @@ tests:
           - labels: 'ovnk:portgroup_amplification:ratio'
             value: 2
 
+  # No MultiNetworkPolicy series at all (cluster without MNPs): ratio still
+  # computed from NetworkPolicies alone.
+  - interval: 1m
+    input_series:
+      - series: 'ovnkube_controller_nb_db_objects{node="A",table="Port_Group",owner_type="NetworkPolicy",network="default"}'
+        values: '300x10'
+      - series: 'ovnkube_clustermanager_network_policies{namespace="ns1",pod="cm"}'
+        values: '100x10'
+    promql_expr_test:
+      - expr: ovnk:portgroup_amplification:ratio
+        eval_time: 5m
+        exp_samples:
+          - labels: 'ovnk:portgroup_amplification:ratio'
+            value: 3
+
+  # No NetworkPolicy series at all: ratio computed from MNPs alone.
+  - interval: 1m
+    input_series:
+      - series: 'ovnkube_controller_nb_db_objects{node="A",table="Port_Group",owner_type="NetworkPolicy",network="default"}'
+        values: '300x10'
+      - series: 'ovnkube_clustermanager_multi_network_policies{namespace="ns1",pod="cm"}'
+        values: '50x10'
+    promql_expr_test:
+      - expr: ovnk:portgroup_amplification:ratio
+        eval_time: 5m
+        exp_samples:
+          - labels: 'ovnk:portgroup_amplification:ratio'
+            value: 6
+
   # NB/SB effectiveness.
   - interval: 1m
     input_series:
