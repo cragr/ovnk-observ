@@ -48,8 +48,8 @@ No current metric shows any of this. The existing "Networking / Infrastructure" 
 | Topology | OVN Interconnect only | 4.20+; per-node NB/SB, no RAFT |
 | Audience | Upstream/product, prototyped in lab | Missing metrics belong in ovnkube-controller |
 | Dashboard format | Classic console ConfigMap (Grafana JSON) in `openshift-config-managed` | Same mechanism CNO uses; no operator install |
-| Prototype exporter | Go, libovsdb + client-go, node and cluster modes | Mirrors the upstream implementation; avoids full-table polling |
-| Counting strategy | Custom update handler, not libovsdb cache | Full cache costs hundreds of MB at lab scale |
+| Prototype exporter | Go, minimal streaming OVSDB client (node mode) + client-go (cluster mode) | libovsdb materializes the full initial dump; see Section 13 |
+| Counting strategy | Custom update handler over the streaming client, no cache | Full cache costs hundreds of MB at lab scale |
 
 ## 4. Architecture
 
@@ -72,7 +72,7 @@ No current metric shows any of this. The existing "Networking / Infrastructure" 
 **Components**
 
 1. **`ovnk-observ-exporter`**: one Go binary.
-   - `--mode=node`: DaemonSet in namespace `ovnk-observ`. Mounts host `/var/run/ovn`. Opens read-only monitors on the local `ovnnb_db.sock` and `ovnsb_db.sock`, requesting only `_uuid`, `external_ids`, and `name` where needed.
+   - `--mode=node`: DaemonSet in namespace `ovnk-observ`. Mounts host `/var/run/ovn`. Opens read-only monitors (`pkg/ovsdbmon`, minimal streaming JSON-RPC client) on the local `ovnnb_db.sock` and `ovnsb_db.sock`, requesting only `_uuid`, `external_ids`, and `name` where needed.
    - `--mode=cluster`: Deployment with informers over Kubernetes objects.
 2. **ServiceMonitors** scraped by platform Prometheus. The namespace carries `openshift.io/cluster-monitoring=true`.
 3. **PrometheusRule** with recording rules and alerts (Section 7).
@@ -88,7 +88,8 @@ No current metric shows any of this. The existing "Networking / Infrastructure" 
 | `ovnkube_controller_sb_db_objects` | gauge | `table` | SB monitor: Logical_Flow, Port_Binding, Datapath_Binding, MAC_Binding, FDB |
 | `ovnkube_controller_nb_db_updates_total` | counter | `table`, `op` (insert/modify/delete) | NB monitor update stream; stands in for transactions per second |
 | `ovnkube_clustermanager_network_attachment_definitions` | gauge | `namespace`, `managed_by` (`user`/`udn`) | informer |
-| `ovnkube_clustermanager_multi_network_policies` | gauge | `namespace`, `policy_for` | informer (`k8s.v1.cni.cncf.io/policy-for` annotation) |
+| `ovnkube_clustermanager_multi_network_policies` | gauge | `namespace` | informer |
+| `ovnkube_clustermanager_multi_network_policy_network_targets` | gauge | `namespace` | informer; Σ over MNPs of entries in the `k8s.v1.cni.cncf.io/policy-for` annotation |
 | `ovnkube_clustermanager_network_policies` | gauge | `namespace` | informer |
 | `ovnkube_clustermanager_user_defined_networks` | gauge | `kind` (UDN/CUDN), `topology`, `role` | informer |
 
@@ -113,7 +114,7 @@ Verified present on the lab:
 - **Recompute cost:** `ovn_northd_ovn_northd_loop_*`, `ovn_northd_build_lflows_*`, `ovn_northd_ovnnb_db_run_*`, `ovn_northd_ovnsb_db_run_*`, `ovn_controller_lflow_run`, `ovn_controller_flow_generation_*`, `ovn_controller_flow_installation_*`, `ovn_controller_integration_bridge_openflow_total`.
 - **K8s scale:** `ovnkube_controller_admin_network_policies_db_objects`, `ovnkube_controller_num_egress_firewall_rules`.
 
-To confirm during implementation: whether `ovn_*_txn_*` and `ovn_controller_lflow_run` are counters or gauges, and which label identifies the node on each series (join through `kube_pod_info` if only `pod` exists).
+Confirmed: existing OVN metrics carry `pod`, not `node`; join with `* on (namespace, pod) group_left(node) kube_pod_info`. `ovn_*_txn_*` are counters (use `rate`). `ovn_db_*` carry `db_name` (`OVN_Northbound`/`OVN_Southbound`).
 
 ## 6. Dashboard
 
@@ -124,14 +125,14 @@ To confirm during implementation: whether `ovn_*_txn_*` and `ovn_controller_lflo
 | Row | Question | Panels |
 |---|---|---|
 | 0. At a glance | Is something wrong? | Max NB ACLs on any node; max PortGroups; largest NB DB; PortGroup amplification; p99 network programming; retry failures (15m); nodes with SB or northd disconnected |
-| 1. Scale & inventory | Is this scale? | K8s objects over time (NAD user/UDN, MNP, NP, UDN/CUDN); NB objects per node by table; top 15 networks by ACL and PortGroup (table); NB ACL vs SB Logical_Flow; ACLs by `owner_type` |
-| 2. Programming latency & backlog | Is OVN-K slow? | Network programming p50/p99 (+ `_ovn_`); resource add/update/delete p99 by kind; pod setup pipeline stacked p99; retry failure rate by node; NB and SB e2e lag per node |
+| 1. Scale & inventory | Is this scale? | K8s objects over time (NAD user/UDN, MNP, MNP network targets, NP, UDN/CUDN); NB objects per node by table; top 15 networks by ACL and PortGroup (table); NB ACL vs SB Logical_Flow; ACLs by `owner_type` |
+| 2. Programming latency & backlog | Is OVN-K slow? | Network programming p50/p99 (+ `_ovn_`); resource add/update/delete p99 by kind; pod setup pipeline stacked p99; retry failure rate by node; NB→SB lag and e2e staleness per node |
 | 3. NB/SB DB health | Is ovsdb-server hurting? | DB size by node and DB; size growth (`deriv` 30m); nbdb/sbdb CPU and RSS; sessions; monitors; connection status; libovsdb disconnect rate |
 | 4. Transactions & churn | How busy is the DB? | NB update rate by table and op; northd and ovn-controller txn rate by result; txn failure ratio |
 | 5. Recompute cost | Are we stuck rebuilding? | northd loop p95/max; `build_lflows`; `ovnnb_db_run`/`ovnsb_db_run`; ovn-controller `lflow_run` rate; flow generation/installation p95/max; br-int OpenFlow count |
 | 6. Exporter self-cost (collapsed) | What does observing cost? | Exporter CPU/RSS per node; DB connected; initial sync time |
 
-Panel types: graph, singlestat, table, row. Confirm the set against the console `monitoring-plugin` before building.
+Panel types: graph, singlestat, table, gauge, row. Confirm the set against the console `monitoring-plugin` before building.
 
 ## 7. Recording rules and alerts
 
@@ -148,7 +149,8 @@ One PrometheusRule, group `ovnk-observ.rules`, interval 30s.
 | `ovnk:network_programming:p99_5m` | `histogram_quantile(0.99, …[5m])` |
 | `ovnk:pod_setup_stage:p99_5m` | one series per pipeline stage, label `stage` |
 | `ovnk:ovn_txn_failure:ratio_5m` | (error + try_again + aborted) ÷ total, label `component` |
-| `ovnk:nb_e2e_lag_seconds`, `ovnk:sb_e2e_lag_seconds` | controller timestamp − DB timestamp, per node |
+| `ovnk:nb_sb_lag_seconds` | `ovnkube_controller_nb_e2e_timestamp - ovnkube_controller_sb_e2e_timestamp`, per node |
+| `ovnk:e2e_staleness_seconds` | `time() - ovnkube_controller_nb_e2e_timestamp`, per node (normal < ~60s) |
 | `ovnk:ovn_db_size_bytes:deriv_30m` | `deriv(ovn_db_db_size_bytes[30m])` |
 
 **Alerts** (prototype, `severity=warning`, `for: 15m`; thresholds are tunable parameters)
@@ -158,7 +160,8 @@ One PrometheusRule, group `ovnk-observ.rules`, interval 30s.
 | `OVNKPortGroupAmplificationHigh` | amplification > 10 |
 | `OVNKNBDBObjectsHigh` | any node ACL or PortGroup count > 100,000 |
 | `OVNKNBDBGrowing` | NB size growth > 50 MB/h sustained 1h |
-| `OVNKPropagationLagHigh` | NB or SB e2e lag > 30s |
+| `OVNKPropagationLagHigh` | NB→SB lag > 30s |
+| `OVNKE2EProbeStale` | e2e staleness > 180s |
 | `OVNKTxnFailureRatioHigh` | failure ratio > 5% |
 | `OVNKNetworkProgrammingSlow` | p99 > 10s |
 
@@ -166,7 +169,7 @@ CNO does not ship alerts. Upstream, the alerts become an optional separate PR or
 
 ## 8. Failure handling
 
-- **Memory.** Node mode skips the libovsdb cache. A custom update handler keeps `map[uuid] → {table, ownerTypeID, networkID}` with interned strings, about 30–50 MB for ~940k rows.
+- **Memory.** Node mode skips the libovsdb cache and decodes the dump row by row. A custom update handler keeps `map[uuid] → {table, ownerTypeID, networkID}` with interned strings, about 30–50 MB for ~940k rows.
 - **Initial dump.** The first monitor on a ~1 GB NB loads ovsdb-server once. The exporter logs the duration, exports `ovnk_observ_initial_sync_seconds`, and backs off exponentially (max 5m) between reconnects so crash loops cannot hammer the DB.
 - **Socket missing or DB restart.** Set `ovnk_observ_db_connected=0`, drop object gauges, reconnect with backoff. Panels show gaps, not wrong numbers.
 - **Informers not synced.** Cluster mode emits no object series until first sync; `ovnk_observ_informer_synced` reports state.
@@ -180,7 +183,7 @@ cmd/ovnk-observ-exporter/main.go     # --mode, --per-network-labels, --listen
 pkg/nbcount/                          # update handler + counters; no k8s deps
 pkg/k8scount/                         # informers for NAD/MNP/NP/UDN/CUDN
 pkg/metrics/                          # metric definitions, cardinality guard
-pkg/ovsdbmodel/                       # modelgen output from cluster NB/SB schemas
+pkg/ovsdbmon/                         # minimal streaming OVSDB JSON-RPC monitor client
 deploy/                               # kustomize: namespace, RBAC, DaemonSet, Deployment,
                                       # Services, ServiceMonitors, PrometheusRule,
                                       # BuildConfig, ImageStream
@@ -189,8 +192,7 @@ hack/verify-panels.sh                 # runs every panel query against thanos-qu
 Makefile, Dockerfile, go.mod
 ```
 
-- Go and libovsdb versions match ovn-kubernetes' `go.mod`.
-- `pkg/ovsdbmodel` is generated from `ovsdb-client get-schema` on the lab.
+- Go version matches ovn-kubernetes' `go.mod` where practical; node mode needs no libovsdb dependency.
 - Build: binary `BuildConfig` pushes to the in-cluster registry. No external registry.
 - `make deploy`, `make dashboard`, `make undeploy` (removes everything, including the dashboard).
 
@@ -215,3 +217,11 @@ Makefile, Dockerfile, go.mod
 ## 12. Out of scope
 
 Perses dashboards; server-side ovsdb transaction rate (needs `ovsdb-server` changes); per-ACL hit or drop statistics; alert routing; multi-cluster views; pre-4.20 RAFT topology.
+
+## 13. Amendments (2026-10-02, from plan research)
+
+- **§3/§4/§8/§9: no libovsdb in node mode.** Node mode uses a minimal streaming OVSDB JSON-RPC client (`pkg/ovsdbmon`). Reason: libovsdb materializes the full initial dump (~940k rows). `pkg/ovsdbmodel` is dropped.
+- **§5.1: `policy_for` label replaced.** `ovnkube_clustermanager_multi_network_policies{namespace}` loses `policy_for`; new `ovnkube_clustermanager_multi_network_policy_network_targets{namespace}` = Σ over MNPs of entries in the `k8s.v1.cni.cncf.io/policy-for` annotation. Reason: on the lab every MNP lists all 147 NADs (one 3k-char label value). 3,150 × 147 ≈ 463k explains the PortGroup count as configured fan-out.
+- **§5.4: existing-metric facts confirmed.** OVN metrics carry `pod`, not `node`; join with `* on (namespace, pod) group_left(node) kube_pod_info`. `ovn_*_txn_*` are counters (use `rate`). `ovn_db_*` carry `db_name` (`OVN_Northbound`/`OVN_Southbound`).
+- **§7: lag definitions.** NB→SB lag = `ovnkube_controller_nb_e2e_timestamp - ovnkube_controller_sb_e2e_timestamp`; write-loop staleness = `time() - ovnkube_controller_nb_e2e_timestamp` (normal < ~60s). `OVNKPropagationLagHigh` uses NB→SB lag > 30s; new `OVNKE2EProbeStale` fires on staleness > 180s. Reason: the old controller-minus-DB lag did not match the series that exist.
+- **§6: panel types and MNP panel.** `gauge` added to allowed panel types; dashboard adds "MNP network targets" next to MNP count.
