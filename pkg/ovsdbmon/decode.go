@@ -11,6 +11,8 @@ import (
 	"github.com/cragr/ovnk-observ/pkg/nbcount"
 )
 
+var errMonitorCanceled = errors.New("ovsdb monitor canceled by server")
+
 // msgKind classifies one decoded JSON-RPC message.
 type msgKind int
 
@@ -122,6 +124,11 @@ func (s *session) readMessage() (msgKind, error) {
 			params = json.RawMessage("[]")
 		}
 		return msgEcho, s.echo(id, params)
+	case "monitor_canceled":
+		// The server dropped our monitor but kept the socket open; no more
+		// updates will arrive, so end the session and let Run reset and
+		// reconnect rather than serve frozen counts as connected.
+		return msgOther, errMonitorCanceled
 	case "":
 		if isNull(rpc) {
 			if hadResult {

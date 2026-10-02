@@ -514,6 +514,32 @@ func TestRunReconnectsAfterServerClose(t *testing.T) {
 	fc2.expectMonitor(t, "OVN_Northbound", aclOnly)
 }
 
+// monitor_canceled (e.g. after the server's database is converted or
+// replaced) ends the monitor while the socket stays open; the client must not
+// keep serving frozen counts as connected.
+func TestMonitorCanceledReconnects(t *testing.T) {
+	setBackoff(t, 10*time.Millisecond)
+	srv := newFakeServer(t)
+	h := startClient(t, srv, aclOnly)
+	fc := srv.accept(t, 3*time.Second)
+	fc.expectMonitor(t, "OVN_Northbound", aclOnly)
+	fc.write(t, threeACLDump())
+	if st := h.state(t); !st.connected {
+		t.Fatalf("state %+v", st)
+	}
+	fc.write(t, `{"method":"monitor_canceled","params":["ovnk-observ"],"id":null}`)
+	if st := h.stateWithin(t, 3*time.Second); st.connected || st.d != 0 {
+		t.Fatalf("OnState = %+v, want (false, 0)", st)
+	}
+	for tbl, m := range h.counter.Snapshot() {
+		if len(m) != 0 {
+			t.Fatalf("snapshot not empty after monitor_canceled: %s %v", tbl, m)
+		}
+	}
+	fc2 := srv.accept(t, 3*time.Second)
+	fc2.expectMonitor(t, "OVN_Northbound", aclOnly)
+}
+
 func TestRunReturnsOnCancelWhileDisconnected(t *testing.T) {
 	setBackoff(t, time.Hour)
 	ctx, cancel := context.WithCancel(context.Background())
