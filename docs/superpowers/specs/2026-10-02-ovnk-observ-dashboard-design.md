@@ -149,8 +149,8 @@ One PrometheusRule, group `ovnk-observ.rules`, interval 30s.
 | `ovnk:network_programming:p99_5m` | `histogram_quantile(0.99, …[5m])` |
 | `ovnk:pod_setup_stage:p99_5m` | one series per pipeline stage, label `stage` |
 | `ovnk:ovn_txn_failure:ratio_5m` | (error + try_again + aborted) ÷ total, label `component` |
-| `ovnk:nb_sb_lag_seconds` | `ovnkube_controller_nb_e2e_timestamp - ovnkube_controller_sb_e2e_timestamp`, per node |
-| `ovnk:e2e_staleness_seconds` | `time() - ovnkube_controller_nb_e2e_timestamp`, per node (normal < ~60s) |
+| `ovnk:nb_sb_e2e_lag_seconds` | `ovnkube_controller_nb_e2e_timestamp - ovnkube_controller_sb_e2e_timestamp`, per node |
+| `ovnk:e2e_probe_staleness_seconds` | `time() - ovnkube_controller_nb_e2e_timestamp`, per node (normal < ~60s) |
 | `ovnk:ovn_db_size_bytes:deriv_30m` | `deriv(ovn_db_db_size_bytes[30m])` |
 
 **Alerts** (prototype, `severity=warning`, `for: 15m`; thresholds are tunable parameters)
