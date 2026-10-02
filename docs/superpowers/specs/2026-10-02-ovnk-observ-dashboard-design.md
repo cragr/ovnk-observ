@@ -190,11 +190,11 @@ deploy/                               # kustomize: namespace, RBAC, DaemonSet, D
                                       # BuildConfig, ImageStream
 dashboards/ovn-scale-troubleshooting.json
 hack/verify-panels.sh                 # runs every panel query against thanos-querier
-Makefile, Dockerfile, go.mod
+Makefile, Containerfile, go.mod
 ```
 
 - Go version matches ovn-kubernetes' `go.mod` where practical; node mode needs no libovsdb dependency.
-- Build: binary `BuildConfig` pushes to the in-cluster registry. No external registry.
+- Build: `make image-build` / `make image-push` publish `quay.io/cragr/ovnk-observ-exporter:<version>` (base `ubi9/ubi-micro:9.6`). For development, `make image-dev` runs a binary `BuildConfig` into the in-cluster registry.
 - `make deploy`, `make dashboard`, `make undeploy` (removes everything, including the dashboard).
 
 ## 10. Testing

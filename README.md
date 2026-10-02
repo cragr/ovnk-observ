@@ -17,12 +17,12 @@ A lab with 3,150 MultiNetworkPolicies, each targeting 147 NADs, produced about 4
 ```
 make build            # compile bin/ovnk-observ-exporter (linux/amd64)
 make deploy           # namespace, RBAC, DaemonSet, Deployment, ServiceMonitors, PrometheusRule
-make image            # runs make build, then starts the in-cluster BuildConfig build
+make image-dev        # runs make build, then starts the in-cluster BuildConfig build
 make rules-gen        # regenerate deploy/prometheusrule.yaml from rules/ (only after editing rules)
 make dashboard-apply  # apply the dashboard ConfigMap to openshift-config-managed
 ```
 
-`make deploy` creates the BuildConfig but does not build the image. Run `make image` after every `make deploy`, including after a `make undeploy`. The pods start once the first build lands in the ImageStream.
+`make deploy` creates the BuildConfig but does not build the image. Run `make image-dev` after every `make deploy`, including after a `make undeploy`. The pods start once the first build lands in the ImageStream.
 
 After `make rules-gen`, run `make deploy` again to apply the regenerated rules.
 

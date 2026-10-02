@@ -4,7 +4,10 @@ HOST_ARCH := $(shell go env GOARCH)
 
 NODE ?= <worker-node>
 
-.PHONY: build test tools image deploy undeploy verify-counts integration rules-test rules-gen dashboard dashboard-apply verify-panels
+IMG ?= quay.io/cragr/ovnk-observ-exporter
+VERSION ?= v0.1.0
+
+.PHONY: build test tools image-build image-push image-dev deploy undeploy verify-counts integration rules-test rules-gen dashboard dashboard-apply verify-panels
 
 build:
 	CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -o bin/ovnk-observ-exporter ./cmd/ovnk-observ-exporter
@@ -19,10 +22,20 @@ bin/promtool:
 	curl -fsSL https://github.com/prometheus/prometheus/releases/download/v$(PROMETHEUS_VERSION)/prometheus-$(PROMETHEUS_VERSION).$(HOST_OS)-$(HOST_ARCH).tar.gz \
 		| tar -xz -C bin --strip-components=1 prometheus-$(PROMETHEUS_VERSION).$(HOST_OS)-$(HOST_ARCH)/promtool
 
-# Upload only the Dockerfile and binary, not the whole repo (bin/promtool is ~150MB).
-image: build
+# Release image. .containerignore limits the context to the Containerfile and binary.
+image-build: build
+	podman build --platform linux/amd64 -f Containerfile --build-arg VERSION=$(VERSION) \
+		-t $(IMG):$(VERSION) -t $(IMG):latest .
+
+image-push:
+	podman push $(IMG):$(VERSION)
+	podman push $(IMG):latest
+
+# Dev image: in-cluster BuildConfig build. Upload only the Containerfile and
+# binary, not the whole repo (bin/promtool is ~150MB).
+image-dev: build
 	@ctx=$$(mktemp -d) && trap 'rm -rf "$$ctx"' EXIT && \
-		mkdir -p "$$ctx/bin" && cp Dockerfile "$$ctx/" && cp bin/ovnk-observ-exporter "$$ctx/bin/" && \
+		mkdir -p "$$ctx/bin" && cp Containerfile "$$ctx/" && cp bin/ovnk-observ-exporter "$$ctx/bin/" && \
 		oc start-build ovnk-observ-exporter -n ovnk-observ --from-dir="$$ctx" --follow
 
 deploy:
