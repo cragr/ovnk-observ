@@ -15,5 +15,5 @@ metadata:
   name: ovnk-observ
 value: 1000000
 globalDefault: false
-preemptionPolicy: PreemptLowerPriority
+preemptionPolicy: Never
 description: OVN-Kubernetes observability exporter (below system-* classes).

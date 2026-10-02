@@ -24,6 +24,8 @@ spec:
         openshift.io/required-scc: privileged
     spec:
       serviceAccountName: ovnk-observ-node
+      # Node mode talks only to the local OVSDB sockets, never the API server.
+      automountServiceAccountToken: false
       priorityClassName: ovnk-observ
       tolerations:
         - operator: Exists
@@ -67,6 +69,7 @@ spec:
           volumeMounts:
             - name: ovn-run
               mountPath: /var/run/ovn
+              readOnly: true
       volumes:
         # OVN interconnect mode: the per-node NB/SB sockets live in
         # /var/run/ovn-ic on the host (ovnkube-node mounts it at /run/ovn).
