@@ -4,7 +4,7 @@ HOST_ARCH := $(shell go env GOARCH)
 
 NODE ?= <worker-node>
 
-.PHONY: build test tools image deploy undeploy verify-counts
+.PHONY: build test tools image deploy undeploy verify-counts integration
 
 build:
 	CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -o bin/ovnk-observ-exporter ./cmd/ovnk-observ-exporter
@@ -33,3 +33,6 @@ undeploy:
 
 verify-counts:
 	hack/verify-counts.sh $(NODE)
+
+integration:
+	hack/integration/run.sh
