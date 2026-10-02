@@ -111,3 +111,4 @@ groups:
           severity: warning
         annotations:
           summary: "Network programming p99 latency is {{ $value | printf \"%.1f\" }}s"
+          description: "p99 over a 1h window, so a single slow burst keeps this alert active for up to ~1h."

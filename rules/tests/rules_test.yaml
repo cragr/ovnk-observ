@@ -274,6 +274,7 @@ tests:
               severity: warning
             exp_annotations:
               summary: "Network programming p99 latency is 19.8s"
+              description: "p99 over a 1h window, so a single slow burst keeps this alert active for up to ~1h."
     promql_expr_test:
       - expr: round(ovnk:network_programming:p99_1h, 0.001)
         eval_time: 30m
