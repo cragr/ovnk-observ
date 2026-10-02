@@ -225,10 +225,10 @@
           "type": "singlestat",
           "span": 2,
           "datasource": "$datasource",
-          "description": "p99 over 5m; 'idle' = no network-programming events in the window",
+          "description": "p99 over the last hour; 'idle' = no network-programming events in the hour",
           "targets": [
             {
-              "expr": "ovnk:network_programming:p99_5m",
+              "expr": "ovnk:network_programming:p99_1h >= 0",
               "legendFormat": "",
               "refId": "A"
             }
@@ -257,11 +257,6 @@
             {
               "op": "=",
               "text": "idle",
-              "value": "NaN"
-            },
-            {
-              "op": "=",
-              "text": "no data",
               "value": "null"
             }
           ],
@@ -552,7 +547,7 @@
               "refId": "A"
             },
             {
-              "expr": "sum by (node) (ovnkube_controller_sb_db_objects{table=\"Logical_Flow\",node=~\"$node\"})",
+              "expr": "sum by (node) (max without (instance, pod, endpoint, container, service) (ovnkube_controller_sb_db_objects{table=\"Logical_Flow\",node=~\"$node\"}))",
               "legendFormat": "{{node}} SB Logical_Flow",
               "refId": "B"
             }
@@ -600,7 +595,7 @@
           "datasource": "$datasource",
           "targets": [
             {
-              "expr": "sum by (owner_type) (ovnkube_controller_nb_db_objects{table=\"ACL\",node=~\"$node\",network=~\"$network\"})",
+              "expr": "sum by (owner_type) (max without (instance, pod, endpoint, container, service) (ovnkube_controller_nb_db_objects{table=\"ACL\",node=~\"$node\",network=~\"$network\"}))",
               "legendFormat": "{{owner_type}}",
               "refId": "A"
             }
@@ -650,23 +645,23 @@
       "panels": [
         {
           "id": 14,
-          "title": "Network programming p50/p99",
+          "title": "Network programming p50/p99 (1h window)",
           "type": "graph",
-          "span": 6,
+          "span": 4,
           "datasource": "$datasource",
           "targets": [
             {
-              "expr": "histogram_quantile(0.5, sum by (le) (rate(ovnkube_controller_network_programming_duration_seconds_bucket[$interval])))",
-              "legendFormat": "p50",
+              "expr": "histogram_quantile(0.5, sum by (le, kind) (rate(ovnkube_controller_network_programming_duration_seconds_bucket[1h]) * on (namespace, pod) group_left(node) max by (namespace, pod, node) (kube_pod_info{node=~\"$node\"})))",
+              "legendFormat": "{{kind}} p50",
               "refId": "A"
             },
             {
-              "expr": "histogram_quantile(0.99, sum by (le) (rate(ovnkube_controller_network_programming_duration_seconds_bucket[$interval])))",
-              "legendFormat": "p99",
+              "expr": "histogram_quantile(0.99, sum by (le, kind) (rate(ovnkube_controller_network_programming_duration_seconds_bucket[1h]) * on (namespace, pod) group_left(node) max by (namespace, pod, node) (kube_pod_info{node=~\"$node\"})))",
+              "legendFormat": "{{kind}} p99",
               "refId": "B"
             },
             {
-              "expr": "histogram_quantile(0.99, sum by (le) (rate(ovnkube_controller_network_programming_ovn_duration_seconds_bucket[$interval])))",
+              "expr": "histogram_quantile(0.99, sum by (le) (rate(ovnkube_controller_network_programming_ovn_duration_seconds_bucket[1h]) * on (namespace, pod) group_left(node) max by (namespace, pod, node) (kube_pod_info{node=~\"$node\"})))",
               "legendFormat": "p99 OVN part",
               "refId": "C"
             }
@@ -708,9 +703,57 @@
         },
         {
           "id": 15,
+          "title": "Network programming events/min",
+          "type": "graph",
+          "span": 4,
+          "datasource": "$datasource",
+          "targets": [
+            {
+              "expr": "sum by (kind) (rate(ovnkube_controller_network_programming_duration_seconds_count[$interval]) * on (namespace, pod) group_left(node) max by (namespace, pod, node) (kube_pod_info{node=~\"$node\"})) * 60",
+              "legendFormat": "{{kind}}",
+              "refId": "A"
+            }
+          ],
+          "lines": true,
+          "linewidth": 1,
+          "fill": 1,
+          "nullPointMode": "null",
+          "legend": {
+            "show": true,
+            "alignAsTable": false,
+            "rightSide": false,
+            "current": false,
+            "max": false,
+            "values": false
+          },
+          "tooltip": {
+            "shared": true,
+            "sort": 2,
+            "value_type": "individual"
+          },
+          "xaxis": {
+            "mode": "time",
+            "show": true
+          },
+          "yaxes": [
+            {
+              "format": "short",
+              "logBase": 1,
+              "min": 0,
+              "show": true
+            },
+            {
+              "format": "short",
+              "logBase": 1,
+              "show": false
+            }
+          ]
+        },
+        {
+          "id": 16,
           "title": "Resource add/update/delete p99",
           "type": "graph",
-          "span": 6,
+          "span": 4,
           "datasource": "$datasource",
           "targets": [
             {
@@ -765,15 +808,15 @@
           ]
         },
         {
-          "id": 16,
-          "title": "Pod setup pipeline p99",
+          "id": 17,
+          "title": "Pod setup pipeline p99 (1h window)",
           "type": "graph",
           "span": 4,
           "datasource": "$datasource",
-          "description": "p99 per pod-setup stage over 5m. Per-stage p99s are not additive, so the lines are not stacked.",
+          "description": "p99 per pod-setup stage over the last hour. Per-stage p99s are not additive, so the lines are not stacked.",
           "targets": [
             {
-              "expr": "ovnk:pod_setup_stage:p99_5m",
+              "expr": "ovnk:pod_setup_stage:p99_1h",
               "legendFormat": "{{stage}}",
               "refId": "A"
             }
@@ -814,7 +857,7 @@
           ]
         },
         {
-          "id": 17,
+          "id": 18,
           "title": "Retry failures by node",
           "type": "graph",
           "span": 4,
@@ -862,7 +905,7 @@
           ]
         },
         {
-          "id": 18,
+          "id": 19,
           "title": "NB→SB lag / probe staleness",
           "type": "graph",
           "span": 4,
@@ -923,7 +966,7 @@
       "showTitle": true,
       "panels": [
         {
-          "id": 19,
+          "id": 20,
           "title": "DB size",
           "type": "graph",
           "span": 6,
@@ -971,7 +1014,7 @@
           ]
         },
         {
-          "id": 20,
+          "id": 21,
           "title": "DB growth per hour",
           "type": "graph",
           "span": 6,
@@ -1018,7 +1061,7 @@
           ]
         },
         {
-          "id": 21,
+          "id": 22,
           "title": "nbdb/sbdb CPU",
           "type": "graph",
           "span": 4,
@@ -1066,7 +1109,7 @@
           ]
         },
         {
-          "id": 22,
+          "id": 23,
           "title": "nbdb/sbdb RSS",
           "type": "graph",
           "span": 4,
@@ -1114,7 +1157,7 @@
           ]
         },
         {
-          "id": 23,
+          "id": 24,
           "title": "Sessions & monitors",
           "type": "graph",
           "span": 4,
@@ -1167,7 +1210,7 @@
           ]
         },
         {
-          "id": 24,
+          "id": 25,
           "title": "Connection status",
           "type": "table",
           "span": 6,
@@ -1240,7 +1283,7 @@
           "transform": "table"
         },
         {
-          "id": 25,
+          "id": 26,
           "title": "libovsdb disconnects",
           "type": "graph",
           "span": 6,
@@ -1296,14 +1339,14 @@
       "showTitle": true,
       "panels": [
         {
-          "id": 26,
+          "id": 27,
           "title": "NB update rate by table/op",
           "type": "graph",
           "span": 6,
           "datasource": "$datasource",
           "targets": [
             {
-              "expr": "sum by (table, op) (rate(ovnkube_controller_nb_db_updates_total{node=~\"$node\"}[$interval]))",
+              "expr": "sum by (table, op) (max without (instance, pod, endpoint, container, service) (rate(ovnkube_controller_nb_db_updates_total{node=~\"$node\"}[$interval])))",
               "legendFormat": "{{table}} {{op}}",
               "refId": "A"
             }
@@ -1344,7 +1387,7 @@
           ]
         },
         {
-          "id": 27,
+          "id": 28,
           "title": "northd txn rate by result",
           "type": "graph",
           "span": 6,
@@ -1407,7 +1450,7 @@
           ]
         },
         {
-          "id": 28,
+          "id": 29,
           "title": "ovn-controller txn rate by result",
           "type": "graph",
           "span": 6,
@@ -1470,7 +1513,7 @@
           ]
         },
         {
-          "id": 29,
+          "id": 30,
           "title": "Txn failure ratio",
           "type": "graph",
           "span": 6,
@@ -1526,7 +1569,7 @@
       "showTitle": true,
       "panels": [
         {
-          "id": 30,
+          "id": 31,
           "title": "northd loop p95 / max",
           "type": "graph",
           "span": 6,
@@ -1579,7 +1622,7 @@
           ]
         },
         {
-          "id": 31,
+          "id": 32,
           "title": "northd build_lflows / nb_db_run / sb_db_run p95",
           "type": "graph",
           "span": 6,
@@ -1637,7 +1680,7 @@
           ]
         },
         {
-          "id": 32,
+          "id": 33,
           "title": "ovn-controller lflow_run rate",
           "type": "graph",
           "span": 4,
@@ -1685,7 +1728,7 @@
           ]
         },
         {
-          "id": 33,
+          "id": 34,
           "title": "Flow generation / installation p95",
           "type": "graph",
           "span": 4,
@@ -1738,7 +1781,7 @@
           ]
         },
         {
-          "id": 34,
+          "id": 35,
           "title": "br-int OpenFlow count",
           "type": "graph",
           "span": 4,
@@ -1794,7 +1837,7 @@
       "showTitle": true,
       "panels": [
         {
-          "id": 35,
+          "id": 36,
           "title": "Exporter CPU",
           "type": "graph",
           "span": 3,
@@ -1842,7 +1885,7 @@
           ]
         },
         {
-          "id": 36,
+          "id": 37,
           "title": "Exporter memory (working set)",
           "type": "graph",
           "span": 3,
@@ -1890,7 +1933,7 @@
           ]
         },
         {
-          "id": 37,
+          "id": 38,
           "title": "DB connected / initial sync",
           "type": "table",
           "span": 6,

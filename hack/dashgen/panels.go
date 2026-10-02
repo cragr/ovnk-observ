@@ -195,9 +195,11 @@ func join(expr string) string {
 	return expr + ` * on (namespace, pod) group_left(node) max by (namespace, pod, node) (kube_pod_info{` + nodeSel + `})`
 }
 
-// cluster deduplicates cluster-mode exporter series across a rollout overlap
-// (old and new pod both scraped) before they are summed.
-func cluster(metric string) string {
+// dedupe drops the scrape-target labels of exporter series so that an old
+// and a new pod scraped together during a rollout (cluster or node mode)
+// collapse into one series before they are summed. node, table, owner_type,
+// network, op and db are kept.
+func dedupe(metric string) string {
 	return "max without (instance, pod, endpoint, container, service) (" + metric + ")"
 }
 
@@ -279,6 +281,10 @@ func row(title string, panels ...Panel) Row {
 
 func rate(metric string) string { return "rate(" + metric + "[$interval])" }
 
+// rate1h is for sparse histograms (tens of events per hour): a shorter rate
+// is zero in quiet windows and histogram_quantile turns that into NaN.
+func rate1h(metric string) string { return "rate(" + metric + "[1h])" }
+
 func sel(metric, matchers string) string { return metric + "{" + matchers + "}" }
 
 // Build returns the full dashboard.
@@ -298,39 +304,42 @@ func Build() Dashboard {
 		),
 		row("Scale & inventory",
 			graph("Kubernetes network objects", "short", 4,
-				t(`sum by (managed_by) (`+cluster("ovnkube_clustermanager_network_attachment_definitions")+`)`, "NADs ({{managed_by}})"),
-				t(`sum(`+cluster("ovnkube_clustermanager_multi_network_policies")+`)`, "MultiNetworkPolicies"),
-				t(`sum(`+cluster("ovnkube_clustermanager_network_policies")+`)`, "NetworkPolicies"),
-				t(`sum by (kind) (`+cluster("ovnkube_clustermanager_user_defined_networks")+`)`, "{{kind}}"),
+				t(`sum by (managed_by) (`+dedupe("ovnkube_clustermanager_network_attachment_definitions")+`)`, "NADs ({{managed_by}})"),
+				t(`sum(`+dedupe("ovnkube_clustermanager_multi_network_policies")+`)`, "MultiNetworkPolicies"),
+				t(`sum(`+dedupe("ovnkube_clustermanager_network_policies")+`)`, "NetworkPolicies"),
+				t(`sum by (kind) (`+dedupe("ovnkube_clustermanager_user_defined_networks")+`)`, "{{kind}}"),
 			),
 			// Network targets outnumber the other objects by orders of
 			// magnitude, so they get their own axis.
 			graph("MultiNetworkPolicy network targets", "short", 4,
-				t(`sum(`+cluster("ovnkube_clustermanager_multi_network_policy_network_targets")+`)`, "MultiNetworkPolicy network targets")),
+				t(`sum(`+dedupe("ovnkube_clustermanager_multi_network_policy_network_targets")+`)`, "MultiNetworkPolicy network targets")),
 			graph("NB objects per node by table", "short", 4,
 				t(sel("ovnk:nb_db_objects:sum_by_node_table", nodeSel), "{{node}} {{table}}")),
 			table("Top networks by ACL / PortGroup", 4, []string{"network", "table"},
 				col(`topk(15, ovnk:nb_db_objects:max_by_network_table{table=~"ACL|Port_Group",network=~"$network"})`, "Objects (max over nodes)")),
 			graph("NB ACL vs SB Logical_Flow", "short", 4,
 				t(`ovnk:nb_db_objects:sum_by_node_table{table="ACL",`+nodeSel+`}`, "{{node}} NB ACL"),
-				t(`sum by (node) (ovnkube_controller_sb_db_objects{table="Logical_Flow",`+nodeSel+`})`, "{{node}} SB Logical_Flow")),
+				t(`sum by (node) (`+dedupe(`ovnkube_controller_sb_db_objects{table="Logical_Flow",`+nodeSel+`}`)+`)`, "{{node}} SB Logical_Flow")),
 			graph("ACLs by owner type", "short", 4,
-				t(`sum by (owner_type) (ovnkube_controller_nb_db_objects{table="ACL",`+nodeSel+`,network=~"$network"})`, "{{owner_type}}")),
+				t(`sum by (owner_type) (`+dedupe(`ovnkube_controller_nb_db_objects{table="ACL",`+nodeSel+`,network=~"$network"}`)+`)`, "{{owner_type}}")),
 		),
 		row("Programming latency & backlog",
-			graph("Network programming p50/p99", "s", 6,
-				t(`histogram_quantile(0.5, sum by (le) (`+rate("ovnkube_controller_network_programming_duration_seconds_bucket")+`))`, "p50"),
-				t(`histogram_quantile(0.99, sum by (le) (`+rate("ovnkube_controller_network_programming_duration_seconds_bucket")+`))`, "p99"),
-				t(`histogram_quantile(0.99, sum by (le) (`+rate("ovnkube_controller_network_programming_ovn_duration_seconds_bucket")+`))`, "p99 OVN part")),
+			// ~34 events/h on the lab: fixed 1h window, not $interval.
+			graph("Network programming p50/p99 (1h window)", "s", 4,
+				t(`histogram_quantile(0.5, sum by (le, kind) (`+join(rate1h("ovnkube_controller_network_programming_duration_seconds_bucket"))+`))`, "{{kind}} p50"),
+				t(`histogram_quantile(0.99, sum by (le, kind) (`+join(rate1h("ovnkube_controller_network_programming_duration_seconds_bucket"))+`))`, "{{kind}} p99"),
+				t(`histogram_quantile(0.99, sum by (le) (`+join(rate1h("ovnkube_controller_network_programming_ovn_duration_seconds_bucket"))+`))`, "p99 OVN part")),
+			graph("Network programming events/min", "short", 4,
+				t(`sum by (kind) (`+join(rate("ovnkube_controller_network_programming_duration_seconds_count"))+`) * 60`, "{{kind}}")),
 			// The resource latency histograms carry no kind-like label on this
 			// OVN-K version (label_names: le + target labels only), so the
 			// split is by operation; J adds the $node filter.
-			graph("Resource add/update/delete p99", "s", 6,
+			graph("Resource add/update/delete p99", "s", 4,
 				t(`histogram_quantile(0.99, sum by (le) (`+join(rate("ovnkube_controller_resource_add_latency_seconds_bucket"))+`))`, "add"),
 				t(`histogram_quantile(0.99, sum by (le) (`+join(rate("ovnkube_controller_resource_update_latency_seconds_bucket"))+`))`, "update"),
 				t(`histogram_quantile(0.99, sum by (le) (`+join(rate("ovnkube_controller_resource_delete_latency_seconds_bucket"))+`))`, "delete")),
-			describe(graph("Pod setup pipeline p99", "s", 4, t(`ovnk:pod_setup_stage:p99_5m`, "{{stage}}")),
-				"p99 per pod-setup stage over 5m. Per-stage p99s are not additive, so the lines are not stacked."),
+			describe(graph("Pod setup pipeline p99 (1h window)", "s", 4, t(`ovnk:pod_setup_stage:p99_1h`, "{{stage}}")),
+				"p99 per pod-setup stage over the last hour. Per-stage p99s are not additive, so the lines are not stacked."),
 			graph("Retry failures by node", "short", 4,
 				t(`sum by (node) (`+join(rate("ovnkube_resource_retry_failures_total"))+`)`, "{{node}}")),
 			graph("NB→SB lag / probe staleness", "s", 4,
@@ -357,7 +366,7 @@ func Build() Dashboard {
 		),
 		row("Transactions & churn",
 			graph("NB update rate by table/op", "ops", 6,
-				t(`sum by (table, op) (`+rate(sel("ovnkube_controller_nb_db_updates_total", nodeSel))+`)`, "{{table}} {{op}}")),
+				t(`sum by (table, op) (`+dedupe(rate(sel("ovnkube_controller_nb_db_updates_total", nodeSel)))+`)`, "{{table}} {{op}}")),
 			graph("northd txn rate by result", "ops", 6, txnTargets("ovn_northd_txn_")...),
 			graph("ovn-controller txn rate by result", "ops", 6, txnTargets("ovn_controller_txn_")...),
 			graph("Txn failure ratio", "percentunit", 6,
@@ -444,12 +453,14 @@ func amplification() Panel {
 	return p
 }
 
-// programmingP99 shows the recording rule as-is: it is NaN when no
-// network-programming events happened in the window, which reads "idle".
+// programmingP99: the 1h p99 is NaN when no network-programming events
+// happened in the hour. ">= 0" drops NaN, so the console gets null, which it
+// maps to "idle" and colors with the base (green) step; a NaN value would
+// land on the critical color.
 func programmingP99() Panel {
-	p := stat("Network programming p99", "s", 2, warnCrit(2, 10), `ovnk:network_programming:p99_5m`)
-	p.ValueMaps = []ValueMap{{Op: "=", Text: "idle", Value: "NaN"}, {Op: "=", Text: "no data", Value: "null"}}
-	p.Description = "p99 over 5m; 'idle' = no network-programming events in the window"
+	p := stat("Network programming p99", "s", 2, warnCrit(2, 10), `ovnk:network_programming:p99_1h >= 0`)
+	p.ValueMaps = []ValueMap{{Op: "=", Text: "idle", Value: "null"}}
+	p.Description = "p99 over the last hour; 'idle' = no network-programming events in the hour"
 	return p
 }
 

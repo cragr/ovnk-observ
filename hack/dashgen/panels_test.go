@@ -236,8 +236,8 @@ func TestPanelCount(t *testing.T) {
 	for _, r := range Build().Rows {
 		n += len(r.Panels)
 	}
-	if n != 37 {
-		t.Errorf("panel count = %d, want 37", n)
+	if n != 38 {
+		t.Errorf("panel count = %d, want 38", n)
 	}
 }
 
@@ -296,15 +296,95 @@ func TestSinglestatColorsUseFieldOptions(t *testing.T) {
 
 func TestProgrammingP99ValueMaps(t *testing.T) {
 	p := panelByTitle(t, Build(), "Network programming p99")
-	want := []ValueMap{{Op: "=", Text: "idle", Value: "NaN"}, {Op: "=", Text: "no data", Value: "null"}}
+	// ">= 0" drops a NaN p99 (no events in the hour), so the console sees
+	// null, maps it to "idle", and colors it with the base (green) step.
+	want := []ValueMap{{Op: "=", Text: "idle", Value: "null"}}
 	if !reflect.DeepEqual(p.ValueMaps, want) {
 		t.Errorf("valueMaps = %+v, want %+v", p.ValueMaps, want)
 	}
-	if p.Targets[0].Expr != "ovnk:network_programming:p99_5m" {
-		t.Errorf("p99 expr = %q, want the plain recording rule", p.Targets[0].Expr)
+	for _, m := range p.ValueMaps {
+		if m.Value == "NaN" {
+			t.Errorf("valueMaps still map NaN: %+v", p.ValueMaps)
+		}
 	}
-	if !strings.Contains(p.Description, "'idle' = no network-programming events") {
-		t.Errorf("p99 description = %q", p.Description)
+	if p.Targets[0].Expr != "ovnk:network_programming:p99_1h >= 0" {
+		t.Errorf("p99 expr = %q, want the 1h recording rule with NaN dropped", p.Targets[0].Expr)
+	}
+	if want := "p99 over the last hour; 'idle' = no network-programming events in the hour"; p.Description != want {
+		t.Errorf("p99 description = %q, want %q", p.Description, want)
+	}
+	if got := consoleColor(p.Options.FieldOptions.Thresholds, 0); got != colorOK {
+		t.Errorf("null (read as 0) colors %q, want %q", got, colorOK)
+	}
+}
+
+func TestNetworkProgrammingPanels(t *testing.T) {
+	d := Build()
+	lat := panelByTitle(t, d, "Network programming p50/p99 (1h window)")
+	wantLegends := []string{"{{kind}} p50", "{{kind}} p99", "p99 OVN part"}
+	if len(lat.Targets) != len(wantLegends) {
+		t.Fatalf("latency targets = %+v", lat.Targets)
+	}
+	for i, tg := range lat.Targets {
+		if tg.LegendFormat != wantLegends[i] {
+			t.Errorf("latency target %d legend = %q, want %q", i, tg.LegendFormat, wantLegends[i])
+		}
+		if !strings.Contains(tg.Expr, "[1h])") || strings.Contains(tg.Expr, "$interval") {
+			t.Errorf("latency target %d not on a fixed 1h window: %s", i, tg.Expr)
+		}
+		if !strings.Contains(tg.Expr, `kube_pod_info{node=~"$node"}`) {
+			t.Errorf("latency target %d lacks the $node join: %s", i, tg.Expr)
+		}
+	}
+	for i := 0; i < 2; i++ {
+		if !strings.Contains(lat.Targets[i].Expr, "sum by (le, kind) (") {
+			t.Errorf("latency target %d not split by kind: %s", i, lat.Targets[i].Expr)
+		}
+	}
+	if !strings.Contains(lat.Targets[2].Expr, "network_programming_ovn_duration_seconds_bucket") {
+		t.Errorf("OVN part target = %s", lat.Targets[2].Expr)
+	}
+
+	ev := panelByTitle(t, d, "Network programming events/min")
+	want := `sum by (kind) (` + join(`rate(ovnkube_controller_network_programming_duration_seconds_count[$interval])`) + `) * 60`
+	if ev.Type != "graph" || len(ev.Targets) != 1 || ev.Targets[0].Expr != want || ev.Targets[0].LegendFormat != "{{kind}}" {
+		t.Errorf("events/min panel = %+v\nwant expr %s", ev, want)
+	}
+
+	// The events graph sits right after the latency graph.
+	for _, r := range d.Rows {
+		for i, p := range r.Panels {
+			if p.Title == lat.Title && (i+1 >= len(r.Panels) || r.Panels[i+1].Title != ev.Title) {
+				t.Errorf("events/min is not next to the latency graph in row %q", r.Title)
+			}
+		}
+	}
+}
+
+func TestPodSetupOneHour(t *testing.T) {
+	p := panelByTitle(t, Build(), "Pod setup pipeline p99 (1h window)")
+	if len(p.Targets) != 1 || p.Targets[0].Expr != "ovnk:pod_setup_stage:p99_1h" {
+		t.Errorf("pod setup targets = %+v", p.Targets)
+	}
+}
+
+// Node-mode exporter series from an old and a new pod overlap during a
+// rollout; every raw use must deduplicate before summing.
+func TestNodeModeSeriesDeduped(t *testing.T) {
+	const d = "max without (instance, pod, endpoint, container, service) ("
+	metrics := []string{"ovnkube_controller_nb_db_objects", "ovnkube_controller_sb_db_objects", "ovnkube_controller_nb_db_updates_total"}
+	for _, r := range Build().Rows {
+		for _, p := range r.Panels {
+			for _, tg := range p.Targets {
+				for _, m := range metrics {
+					n := strings.Count(tg.Expr, m)
+					ok := strings.Count(tg.Expr, d+m) + strings.Count(tg.Expr, d+"rate("+m)
+					if n != ok {
+						t.Errorf("panel %q uses %s without dedupe: %s", p.Title, m, tg.Expr)
+					}
+				}
+			}
+		}
 	}
 }
 
@@ -364,7 +444,7 @@ func TestGraphYAxisMin(t *testing.T) {
 }
 
 func TestPodSetupUnstacked(t *testing.T) {
-	p := panelByTitle(t, Build(), "Pod setup pipeline p99")
+	p := panelByTitle(t, Build(), "Pod setup pipeline p99 (1h window)")
 	if p.Stack {
 		t.Error("per-stage p99s are not additive; panel must not stack")
 	}
