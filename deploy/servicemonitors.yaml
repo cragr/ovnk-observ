@@ -30,6 +30,4 @@ spec:
       path: /metrics
       interval: 30s
       scrapeTimeout: 20s
-      relabelings:
-        - sourceLabels: [__meta_kubernetes_pod_node_name]
-          targetLabel: node
+      # No node relabel: cluster-scoped series must not carry a node label.

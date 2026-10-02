@@ -6,6 +6,7 @@ package k8scount
 
 import (
 	"context"
+	"fmt"
 	"log/slog"
 	"strings"
 
@@ -62,6 +63,11 @@ func NewCollector(ctx context.Context, dyn dynamic.Interface, kube kubernetes.In
 
 	np := informers.NewSharedInformerFactory(kube, 0)
 	c.informers["networkpolicy"] = np.Networking().V1().NetworkPolicies().Informer()
+	transforms := map[string]cache.TransformFunc{
+		"networkpolicy": transformNetworkPolicy,
+		"nad":           transformNAD, "mnp": transformMNP,
+		"udn": transformUDN, "cudn": transformCUDN,
+	}
 
 	factory := dynamicinformer.NewDynamicSharedInformerFactory(dyn, 0)
 	gvCache := map[string]map[string]bool{}
@@ -92,6 +98,13 @@ func NewCollector(ctx context.Context, dyn dynamic.Interface, kube kubernetes.In
 	}{{"nad", nadGVR}, {"mnp", mnpGVR}, {"udn", udnGVR}, {"cudn", cudnGVR}} {
 		if available(d.gvr) {
 			c.informers[d.name] = factory.ForResource(d.gvr).Informer()
+		}
+	}
+
+	// Transforms must be set before the informers start.
+	for name, inf := range c.informers {
+		if err := inf.SetTransform(transforms[name]); err != nil {
+			return nil, fmt.Errorf("set %s informer transform: %w", name, err)
 		}
 	}
 

@@ -19,8 +19,11 @@ bin/promtool:
 	curl -fsSL https://github.com/prometheus/prometheus/releases/download/v$(PROMETHEUS_VERSION)/prometheus-$(PROMETHEUS_VERSION).$(HOST_OS)-$(HOST_ARCH).tar.gz \
 		| tar -xz -C bin --strip-components=1 prometheus-$(PROMETHEUS_VERSION).$(HOST_OS)-$(HOST_ARCH)/promtool
 
+# Upload only the Dockerfile and binary, not the whole repo (bin/promtool is ~150MB).
 image: build
-	oc start-build ovnk-observ-exporter -n ovnk-observ --from-dir=. --follow
+	@ctx=$$(mktemp -d) && trap 'rm -rf "$$ctx"' EXIT && \
+		mkdir -p "$$ctx/bin" && cp Dockerfile "$$ctx/" && cp bin/ovnk-observ-exporter "$$ctx/bin/" && \
+		oc start-build ovnk-observ-exporter -n ovnk-observ --from-dir="$$ctx" --follow
 
 deploy:
 	oc apply -k deploy/
