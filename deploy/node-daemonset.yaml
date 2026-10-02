@@ -1,0 +1,76 @@
+apiVersion: apps/v1
+kind: DaemonSet
+metadata:
+  name: ovnk-observ-node
+  namespace: ovnk-observ
+  labels:
+    app: ovnk-observ-node
+  annotations:
+    image.openshift.io/triggers: >-
+      [{"from":{"kind":"ImageStreamTag","name":"ovnk-observ-exporter:latest","namespace":"ovnk-observ"},"fieldPath":"spec.template.spec.containers[?(@.name==\"exporter\")].image"}]
+spec:
+  selector:
+    matchLabels:
+      app: ovnk-observ-node
+  updateStrategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxUnavailable: 1
+  template:
+    metadata:
+      labels:
+        app: ovnk-observ-node
+      annotations:
+        openshift.io/required-scc: privileged
+    spec:
+      serviceAccountName: ovnk-observ-node
+      priorityClassName: ovnk-observ
+      tolerations:
+        - operator: Exists
+      nodeSelector:
+        kubernetes.io/os: linux
+      containers:
+        - name: exporter
+          image: image-registry.openshift-image-registry.svc:5000/ovnk-observ/ovnk-observ-exporter:latest
+          imagePullPolicy: IfNotPresent
+          args:
+            - --mode=node
+            - --listen=:9410
+            - --per-network-labels=topN:50
+            - --nb-socket=/var/run/ovn/ovnnb_db.sock
+            - --sb-socket=/var/run/ovn/ovnsb_db.sock
+          ports:
+            - name: metrics
+              containerPort: 9410
+              protocol: TCP
+          securityContext:
+            privileged: true
+            runAsUser: 0
+          resources:
+            requests:
+              cpu: 50m
+              memory: 64Mi
+            limits:
+              cpu: 500m
+              memory: 256Mi
+          livenessProbe:
+            httpGet:
+              path: /healthz
+              port: metrics
+            initialDelaySeconds: 10
+            periodSeconds: 30
+          readinessProbe:
+            httpGet:
+              path: /healthz
+              port: metrics
+            periodSeconds: 10
+          volumeMounts:
+            - name: ovn-run
+              mountPath: /var/run/ovn
+      volumes:
+        # OVN interconnect mode: the per-node NB/SB sockets live in
+        # /var/run/ovn-ic on the host (ovnkube-node mounts it at /run/ovn).
+        - name: ovn-run
+          hostPath:
+            path: /var/run/ovn-ic
+            type: Directory

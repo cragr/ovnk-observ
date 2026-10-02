@@ -1,0 +1,58 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: ovnk-observ-cluster
+  namespace: ovnk-observ
+  labels:
+    app: ovnk-observ-cluster
+  annotations:
+    image.openshift.io/triggers: >-
+      [{"from":{"kind":"ImageStreamTag","name":"ovnk-observ-exporter:latest","namespace":"ovnk-observ"},"fieldPath":"spec.template.spec.containers[?(@.name==\"exporter\")].image"}]
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: ovnk-observ-cluster
+  template:
+    metadata:
+      labels:
+        app: ovnk-observ-cluster
+    spec:
+      serviceAccountName: ovnk-observ-cluster
+      priorityClassName: ovnk-observ
+      containers:
+        - name: exporter
+          image: image-registry.openshift-image-registry.svc:5000/ovnk-observ/ovnk-observ-exporter:latest
+          imagePullPolicy: IfNotPresent
+          args:
+            - --mode=cluster
+            - --listen=:9410
+          ports:
+            - name: metrics
+              containerPort: 9410
+              protocol: TCP
+          securityContext:
+            allowPrivilegeEscalation: false
+            runAsNonRoot: true
+            capabilities:
+              drop: ["ALL"]
+            seccompProfile:
+              type: RuntimeDefault
+          resources:
+            requests:
+              cpu: 20m
+              memory: 64Mi
+            limits:
+              cpu: 200m
+              memory: 256Mi
+          livenessProbe:
+            httpGet:
+              path: /healthz
+              port: metrics
+            initialDelaySeconds: 10
+            periodSeconds: 30
+          readinessProbe:
+            httpGet:
+              path: /healthz
+              port: metrics
+            periodSeconds: 10

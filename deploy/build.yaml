@@ -1,0 +1,23 @@
+apiVersion: image.openshift.io/v1
+kind: ImageStream
+metadata:
+  name: ovnk-observ-exporter
+  namespace: ovnk-observ
+---
+apiVersion: build.openshift.io/v1
+kind: BuildConfig
+metadata:
+  name: ovnk-observ-exporter
+  namespace: ovnk-observ
+spec:
+  runPolicy: Serial
+  source:
+    type: Binary
+  strategy:
+    type: Docker
+    dockerStrategy:
+      dockerfilePath: Dockerfile
+  output:
+    to:
+      kind: ImageStreamTag
+      name: ovnk-observ-exporter:latest

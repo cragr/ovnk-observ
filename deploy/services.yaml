@@ -1,0 +1,32 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: ovnk-observ-node
+  namespace: ovnk-observ
+  labels:
+    app: ovnk-observ-node
+spec:
+  clusterIP: None
+  selector:
+    app: ovnk-observ-node
+  ports:
+    - name: metrics
+      port: 9410
+      targetPort: metrics
+      protocol: TCP
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: ovnk-observ-cluster
+  namespace: ovnk-observ
+  labels:
+    app: ovnk-observ-cluster
+spec:
+  selector:
+    app: ovnk-observ-cluster
+  ports:
+    - name: metrics
+      port: 9410
+      targetPort: metrics
+      protocol: TCP

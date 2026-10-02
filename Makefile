@@ -2,7 +2,9 @@ PROMETHEUS_VERSION ?= 3.5.0
 HOST_OS := $(shell go env GOOS)
 HOST_ARCH := $(shell go env GOARCH)
 
-.PHONY: build test tools
+NODE ?= <worker-node>
+
+.PHONY: build test tools image deploy undeploy verify-counts
 
 build:
 	CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -o bin/ovnk-observ-exporter ./cmd/ovnk-observ-exporter
@@ -16,3 +18,15 @@ bin/promtool:
 	mkdir -p bin
 	curl -fsSL https://github.com/prometheus/prometheus/releases/download/v$(PROMETHEUS_VERSION)/prometheus-$(PROMETHEUS_VERSION).$(HOST_OS)-$(HOST_ARCH).tar.gz \
 		| tar -xz -C bin --strip-components=1 prometheus-$(PROMETHEUS_VERSION).$(HOST_OS)-$(HOST_ARCH)/promtool
+
+image: build
+	oc start-build ovnk-observ-exporter -n ovnk-observ --from-dir=. --follow
+
+deploy:
+	oc apply -k deploy/
+
+undeploy:
+	oc delete -k deploy/ --ignore-not-found
+
+verify-counts:
+	hack/verify-counts.sh $(NODE)
