@@ -8,3 +8,4 @@ resources:
   - cluster-deployment.yaml
   - services.yaml
   - servicemonitors.yaml
+  - prometheusrule.yaml

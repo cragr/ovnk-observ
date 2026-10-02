@@ -1,0 +1,110 @@
+groups:
+  - name: ovnk-observ.rules
+    interval: 30s
+    rules:
+      - record: ovnk:nb_db_objects:sum_by_node_table
+        expr: |-
+          sum by (node, table) (ovnkube_controller_nb_db_objects)
+      - record: ovnk:nb_db_objects:max_by_table
+        expr: |-
+          max by (table) (ovnk:nb_db_objects:sum_by_node_table)
+      - record: ovnk:nb_db_objects:max_by_network_table
+        expr: |-
+          max by (network, table) (sum by (node, network, table) (ovnkube_controller_nb_db_objects))
+      - record: ovnk:portgroup_amplification:ratio
+        expr: |-
+          max(sum by (node) (ovnkube_controller_nb_db_objects{table="Port_Group",owner_type="NetworkPolicy"})) / clamp_min(sum(max without (instance, pod, endpoint, container, service) (ovnkube_clustermanager_multi_network_policies)) + sum(max without (instance, pod, endpoint, container, service) (ovnkube_clustermanager_network_policies)), 1)
+      - record: ovnk:nb_sb_effectiveness:ratio
+        expr: |-
+          sum by (node) (ovnkube_controller_sb_db_objects{table="Logical_Flow"}) / clamp_min(sum by (node) (ovnkube_controller_nb_db_objects{table="ACL"}), 1)
+      - record: ovnk:network_programming:p99_5m
+        expr: |-
+          histogram_quantile(0.99, sum by (le) (rate(ovnkube_controller_network_programming_duration_seconds_bucket[5m])))
+      - record: ovnk:pod_setup_stage:p99_5m
+        expr: |-
+          histogram_quantile(0.99, sum by (le) (rate(ovnkube_controller_pod_first_seen_lsp_created_duration_seconds_bucket[5m])))
+        labels:
+          stage: first_seen_lsp
+      - record: ovnk:pod_setup_stage:p99_5m
+        expr: |-
+          histogram_quantile(0.99, sum by (le) (rate(ovnkube_controller_pod_lsp_created_port_binding_duration_seconds_bucket[5m])))
+        labels:
+          stage: lsp_port_binding
+      - record: ovnk:pod_setup_stage:p99_5m
+        expr: |-
+          histogram_quantile(0.99, sum by (le) (rate(ovnkube_controller_pod_port_binding_port_binding_chassis_duration_seconds_bucket[5m])))
+        labels:
+          stage: port_binding_chassis
+      - record: ovnk:pod_setup_stage:p99_5m
+        expr: |-
+          histogram_quantile(0.99, sum by (le) (rate(ovnkube_controller_pod_port_binding_chassis_port_binding_up_duration_seconds_bucket[5m])))
+        labels:
+          stage: chassis_up
+      - record: ovnk:ovn_txn_failure:ratio_5m
+        expr: |-
+          (sum by (namespace, pod) (rate(ovn_northd_txn_error[5m]) + rate(ovn_northd_txn_try_again[5m]) + rate(ovn_northd_txn_aborted[5m])) / clamp_min(sum by (namespace, pod) (rate(ovn_northd_txn_success[5m]) + rate(ovn_northd_txn_error[5m]) + rate(ovn_northd_txn_try_again[5m]) + rate(ovn_northd_txn_aborted[5m])), 1e-9)) * on (namespace, pod) group_left(node) kube_pod_info
+        labels:
+          component: northd
+      - record: ovnk:ovn_txn_failure:ratio_5m
+        expr: |-
+          (sum by (namespace, pod) (rate(ovn_controller_txn_error[5m]) + rate(ovn_controller_txn_try_again[5m]) + rate(ovn_controller_txn_aborted[5m])) / clamp_min(sum by (namespace, pod) (rate(ovn_controller_txn_success[5m]) + rate(ovn_controller_txn_error[5m]) + rate(ovn_controller_txn_try_again[5m]) + rate(ovn_controller_txn_aborted[5m])), 1e-9)) * on (namespace, pod) group_left(node) kube_pod_info
+        labels:
+          component: controller
+      - record: ovnk:nb_sb_e2e_lag_seconds
+        expr: |-
+          (ovnkube_controller_nb_e2e_timestamp - ovnkube_controller_sb_e2e_timestamp) * on (namespace, pod) group_left(node) kube_pod_info
+      - record: ovnk:e2e_probe_staleness_seconds
+        expr: |-
+          (time() - ovnkube_controller_nb_e2e_timestamp) * on (namespace, pod) group_left(node) kube_pod_info
+      - record: ovnk:ovn_db_size_bytes:deriv_30m
+        expr: |-
+          deriv(ovn_db_db_size_bytes[30m]) * on (namespace, pod) group_left(node) kube_pod_info
+      - alert: OVNKPortGroupAmplificationHigh
+        expr: ovnk:portgroup_amplification:ratio > 10
+        for: 15m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Port_Group amplification is {{ $value | printf \"%.1f\" }} NB Port_Groups per policy"
+      - alert: OVNKNBDBObjectsHigh
+        expr: ovnk:nb_db_objects:sum_by_node_table{table=~"ACL|Port_Group"} > 100000
+        for: 15m
+        labels:
+          severity: warning
+        annotations:
+          summary: "NB {{ $labels.table }} count on {{ $labels.node }} is {{ $value | printf \"%.0f\" }}"
+      - alert: OVNKNBDBGrowing
+        expr: ovnk:ovn_db_size_bytes:deriv_30m{db_name="OVN_Northbound"} * 3600 > 50e6
+        for: 1h
+        labels:
+          severity: warning
+        annotations:
+          summary: "OVN Northbound DB on {{ $labels.node }} is growing {{ $value | humanize }}B/h"
+      - alert: OVNKPropagationLagHigh
+        expr: ovnk:nb_sb_e2e_lag_seconds > 30
+        for: 15m
+        labels:
+          severity: warning
+        annotations:
+          summary: "NB to SB propagation lag on {{ $labels.node }} is {{ $value | printf \"%.0f\" }}s"
+      - alert: OVNKE2EProbeStale
+        expr: ovnk:e2e_probe_staleness_seconds > 180
+        for: 15m
+        labels:
+          severity: warning
+        annotations:
+          summary: "E2E probe on {{ $labels.node }} has not updated for {{ $value | printf \"%.0f\" }}s"
+      - alert: OVNKTxnFailureRatioHigh
+        expr: ovnk:ovn_txn_failure:ratio_5m > 0.05
+        for: 15m
+        labels:
+          severity: warning
+        annotations:
+          summary: "OVN {{ $labels.component }} transaction failure ratio on {{ $labels.node }} is {{ $value | printf \"%.4f\" }}"
+      - alert: OVNKNetworkProgrammingSlow
+        expr: ovnk:network_programming:p99_5m > 10
+        for: 15m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Network programming p99 latency is {{ $value | printf \"%.1f\" }}s"
