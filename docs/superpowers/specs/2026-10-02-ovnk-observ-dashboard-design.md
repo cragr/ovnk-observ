@@ -126,7 +126,7 @@ Confirmed: existing OVN metrics carry `pod`, not `node`; join with `* on (namesp
 |---|---|---|
 | 0. At a glance | Is something wrong? | Max NB ACLs on any node; max PortGroups; largest NB DB; PortGroup amplification; p99 network programming; retry failures (15m); nodes with SB or northd disconnected |
 | 1. Scale & inventory | Is this scale? | K8s objects over time (NAD user/UDN, MNP, MNP network targets, NP, UDN/CUDN); NB objects per node by table; top 15 networks by ACL and PortGroup (table); NB ACL vs SB Logical_Flow; ACLs by `owner_type` |
-| 2. Programming latency & backlog | Is OVN-K slow? | Network programming p50/p99 (+ `_ovn_`); resource add/update/delete p99 by kind; pod setup pipeline per-stage p99 (not stacked: per-stage p99s are not additive); retry failure rate by node; NB→SB lag and e2e staleness per node |
+| 2. Programming latency & backlog | Is OVN-K slow? | Network programming p50/p99 by kind (+ `_ovn_`), fixed 1h window; network programming events/min by kind; resource add/update/delete p99 by kind; pod setup pipeline per-stage p99 over 1h (not stacked: per-stage p99s are not additive); retry failure rate by node; NB→SB lag and e2e staleness per node |
 | 3. NB/SB DB health | Is ovsdb-server hurting? | DB size by node and DB; size growth (`deriv` 30m); nbdb/sbdb CPU and RSS; sessions; monitors; connection status; libovsdb disconnect rate |
 | 4. Transactions & churn | How busy is the DB? | NB update rate by table and op; northd and ovn-controller txn rate by result; txn failure ratio |
 | 5. Recompute cost | Are we stuck rebuilding? | northd loop p95/max; `build_lflows`; `ovnnb_db_run`/`ovnsb_db_run`; ovn-controller `lflow_run` rate; flow generation/installation p95/max; br-int OpenFlow count |
@@ -146,8 +146,9 @@ One PrometheusRule, group `ovnk-observ.rules`, interval 30s.
 | `ovnk:nb_db_objects:sum_by_network_table` | per-network totals on the worst node |
 | `ovnk:portgroup_amplification:ratio` | NetworkPolicy-owned PortGroups (worst node) ÷ (sum MNP + sum NP) |
 | `ovnk:nb_sb_effectiveness:ratio` | SB Logical_Flow ÷ NB ACL, per node |
-| `ovnk:network_programming:p99_5m` | `histogram_quantile(0.99, …[5m])` |
-| `ovnk:pod_setup_stage:p99_5m` | one series per pipeline stage, label `stage` |
+| `ovnk:network_programming:p99_1h` | `histogram_quantile(0.99, …[1h])` (events are sparse; 5m windows give NaN) |
+| `ovnk:network_programming:p99_1h_by_kind` | same, `sum by (le, kind)` |
+| `ovnk:pod_setup_stage:p99_1h` | one series per pipeline stage over `[1h]`, label `stage` |
 | `ovnk:ovn_txn_failure:ratio_5m` | (error + try_again + aborted) ÷ total, label `component` |
 | `ovnk:nb_sb_e2e_lag_seconds` | `ovnkube_controller_nb_e2e_timestamp - ovnkube_controller_sb_e2e_timestamp`, per node |
 | `ovnk:e2e_probe_staleness_seconds` | `time() - ovnkube_controller_nb_e2e_timestamp`, per node (normal < ~60s) |
@@ -225,3 +226,4 @@ Perses dashboards; server-side ovsdb transaction rate (needs `ovsdb-server` chan
 - **§5.4: existing-metric facts confirmed.** OVN metrics carry `pod`, not `node`; join with `* on (namespace, pod) group_left(node) kube_pod_info`. `ovn_*_txn_*` are counters (use `rate`). `ovn_db_*` carry `db_name` (`OVN_Northbound`/`OVN_Southbound`).
 - **§7: lag definitions.** NB→SB lag = `ovnkube_controller_nb_e2e_timestamp - ovnkube_controller_sb_e2e_timestamp`; write-loop staleness = `time() - ovnkube_controller_nb_e2e_timestamp` (normal < ~60s). `OVNKPropagationLagHigh` uses NB→SB lag > 30s; new `OVNKE2EProbeStale` fires on staleness > 180s. Reason: the old controller-minus-DB lag did not match the series that exist.
 - **§6: panel types and MNP panel.** `gauge` added to allowed panel types; dashboard adds "MNP network targets" next to MNP count.
+- 2026-10-02: latency rules moved to 1h windows (sparse events → NaN at 5m); node-mode series deduped before summing (rollout overlap doubled counts).
