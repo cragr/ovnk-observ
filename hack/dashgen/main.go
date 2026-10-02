@@ -1,6 +1,6 @@
-// Command dashgen generates the "Networking / OVN-Kubernetes Scale &
-// Troubleshooting" console dashboard JSON and the ConfigMap that installs it
-// into openshift-config-managed.
+// Command dashgen generates the "Networking / OVN-K Observ" console
+// dashboard JSON and the ConfigMap that installs it into
+// openshift-config-managed.
 //
 //	go run ./hack/dashgen -out dashboards/ -configmap deploy/dashboard-configmap.yaml
 package main

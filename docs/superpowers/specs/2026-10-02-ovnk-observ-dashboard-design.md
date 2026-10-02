@@ -118,7 +118,7 @@ Confirmed: existing OVN metrics carry `pod`, not `node`; join with `* on (namesp
 
 ## 6. Dashboard
 
-**Title:** Networking / OVN-Kubernetes Scale & Troubleshooting
+**Title:** Networking / OVN-K Observ
 **Variables:** `$node`, `$network` (`label_values(ovnkube_controller_nb_db_objects, network)`), `$interval`
 **Links:** "Networking / Infrastructure" for CNI latency and CPU/RSS. This dashboard does not duplicate them.
 
@@ -126,13 +126,13 @@ Confirmed: existing OVN metrics carry `pod`, not `node`; join with `* on (namesp
 |---|---|---|
 | 0. At a glance | Is something wrong? | Max NB ACLs on any node; max PortGroups; largest NB DB; PortGroup amplification; p99 network programming; retry failures (15m); nodes with SB or northd disconnected |
 | 1. Scale & inventory | Is this scale? | K8s objects over time (NAD user/UDN, MNP, MNP network targets, NP, UDN/CUDN); NB objects per node by table; top 15 networks by ACL and PortGroup (table); NB ACL vs SB Logical_Flow; ACLs by `owner_type` |
-| 2. Programming latency & backlog | Is OVN-K slow? | Network programming p50/p99 (+ `_ovn_`); resource add/update/delete p99 by kind; pod setup pipeline stacked p99; retry failure rate by node; NB→SB lag and e2e staleness per node |
+| 2. Programming latency & backlog | Is OVN-K slow? | Network programming p50/p99 (+ `_ovn_`); resource add/update/delete p99 by kind; pod setup pipeline per-stage p99 (not stacked: per-stage p99s are not additive); retry failure rate by node; NB→SB lag and e2e staleness per node |
 | 3. NB/SB DB health | Is ovsdb-server hurting? | DB size by node and DB; size growth (`deriv` 30m); nbdb/sbdb CPU and RSS; sessions; monitors; connection status; libovsdb disconnect rate |
 | 4. Transactions & churn | How busy is the DB? | NB update rate by table and op; northd and ovn-controller txn rate by result; txn failure ratio |
 | 5. Recompute cost | Are we stuck rebuilding? | northd loop p95/max; `build_lflows`; `ovnnb_db_run`/`ovnsb_db_run`; ovn-controller `lflow_run` rate; flow generation/installation p95/max; br-int OpenFlow count |
 | 6. Exporter self-cost (collapsed) | What does observing cost? | Exporter CPU/RSS per node; DB connected; initial sync time |
 
-Panel types: graph, singlestat, table, gauge, row. Confirm the set against the console `monitoring-plugin` before building.
+Panel types: graph, singlestat, table, row. The console `monitoring-plugin` renders `gauge` with the same SingleStat component (no dial), so it is not used; singlestats are colored via `options.fieldOptions.thresholds`.
 
 ## 7. Recording rules and alerts
 

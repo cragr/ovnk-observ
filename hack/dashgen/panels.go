@@ -1,6 +1,6 @@
 package main
 
-import "fmt"
+import "math"
 
 // Schema: the legacy Grafana "rows" layout that the OpenShift console's
 // monitoring dashboards page renders (same shape as the dashboards already in
@@ -79,17 +79,15 @@ type Panel struct {
 	Description string   `json:"description,omitempty"`
 	Targets     []Target `json:"targets"`
 
-	// singlestat / gauge
-	Format     string     `json:"format,omitempty"`
-	Thresholds string     `json:"thresholds,omitempty"`
-	Colors     []string   `json:"colors,omitempty"`
-	ColorValue bool       `json:"colorValue,omitempty"`
-	ValueName  string     `json:"valueName,omitempty"`
-	Decimals   *int       `json:"decimals,omitempty"`
-	Gauge      *GaugeOpts `json:"gauge,omitempty"`
-	Options    *PanelOpts `json:"options,omitempty"`
-	ValueMaps  []ValueMap `json:"valueMaps,omitempty"`
-	Sparkline  *Sparkline `json:"sparkline,omitempty"`
+	// singlestat. The console colors a singlestat only from
+	// options.fieldOptions.thresholds (the legacy thresholds/colors strings
+	// are ignored), and renders "gauge" as a singlestat, so neither is used.
+	Format    string     `json:"format,omitempty"`
+	ValueName string     `json:"valueName,omitempty"`
+	Decimals  *int       `json:"decimals,omitempty"`
+	Options   *PanelOpts `json:"options,omitempty"`
+	ValueMaps []ValueMap `json:"valueMaps,omitempty"`
+	Sparkline *Sparkline `json:"sparkline,omitempty"`
 
 	// graph
 	Lines         bool    `json:"lines,omitempty"`
@@ -115,14 +113,6 @@ type Target struct {
 	Format       string `json:"format,omitempty"`
 
 	alias string // table column header for this target's value
-}
-
-type GaugeOpts struct {
-	MinValue         float64 `json:"minValue"`
-	MaxValue         float64 `json:"maxValue"`
-	Show             bool    `json:"show"`
-	ThresholdLabels  bool    `json:"thresholdLabels"`
-	ThresholdMarkers bool    `json:"thresholdMarkers"`
 }
 
 type PanelOpts struct {
@@ -185,13 +175,16 @@ type Style struct {
 }
 
 const (
-	title    = "Networking / OVN-Kubernetes Scale & Troubleshooting"
-	dsVar    = "$datasource"
-	nodeSel  = `node=~"$node"`
-	ovnNS    = `namespace="openshift-ovn-kubernetes"`
-	colorOK  = "rgba(50, 172, 45, 0.97)"
-	colorWrn = "rgba(237, 129, 40, 0.89)"
-	colorBad = "rgba(245, 54, 54, 0.9)"
+	title   = "Networking / OVN-K Observ"
+	dsVar   = "$datasource"
+	nodeSel = `node=~"$node"`
+	ovnNS   = `namespace="openshift-ovn-kubernetes"`
+
+	// PatternFly color names the console understands. There is no pure red;
+	// light-red is the most saturated one ("red" renders orange).
+	colorOK   = "green"
+	colorWarn = "light-yellow"
+	colorCrit = "light-red"
 )
 
 // join attaches the node label to series that only carry namespace/pod (the
@@ -230,28 +223,37 @@ func graph(title, unit string, span int, targets ...Target) Panel {
 
 func stacked(p Panel) Panel { p.Stack = true; p.Fill = 3; return p }
 
-func stat(title, unit string, span int, thresholds, expr string) Panel {
+// noMin lets the left y-axis go negative (the console ignores min, but
+// Grafana and upstream imports honor it).
+func noMin(p Panel) Panel { p.YAxes[0].Min = nil; return p }
+
+func describe(p Panel, d string) Panel { p.Description = d; return p }
+
+func step(color string, v float64) Threshold { return Threshold{Color: color, Value: &v} }
+
+// warnCrit colors value >= warn as warning and >= crit as critical. The
+// console picks steps[sortedIndexBy(steps, value) - 1], so a value equal to a
+// step's value takes the step below; each step therefore sits at the largest
+// float64 below its threshold. The base step is -1 rather than null because
+// the console reads null as 0, which would leave a value of 0 uncolored.
+func warnCrit(warn, crit float64) []Threshold {
+	return []Threshold{
+		step(colorOK, -1),
+		step(colorWarn, math.Nextafter(warn, math.Inf(-1))),
+		step(colorCrit, math.Nextafter(crit, math.Inf(-1))),
+	}
+}
+
+// stat is a singlestat; steps (may be nil) color it in the console.
+func stat(title, unit string, span int, steps []Threshold, expr string) Panel {
 	p := Panel{
 		Title: title, Type: "singlestat", Span: span, Format: unit,
 		ValueName: "current", Targets: []Target{t(expr, "")},
 		Sparkline: &Sparkline{Show: false},
 	}
-	if thresholds != "" {
-		p.Thresholds = thresholds
-		p.Colors = []string{colorOK, colorWrn, colorBad}
-		p.ColorValue = true
+	if steps != nil {
+		p.Options = &PanelOpts{FieldOptions: FieldOptions{Thresholds: steps}}
 	}
-	return p
-}
-
-func gauge(title string, span int, warn, crit, max float64, expr string) Panel {
-	p := stat(title, "short", span, fmt.Sprintf("%g,%g", warn, crit), expr)
-	p.Type = "gauge"
-	p.Decimals = new(int)
-	p.Gauge = &GaugeOpts{MinValue: 0, MaxValue: max, Show: true, ThresholdMarkers: true}
-	p.Options = &PanelOpts{FieldOptions: FieldOptions{Thresholds: []Threshold{
-		{Color: "green", Value: nil}, {Color: "yellow", Value: &warn}, {Color: "red", Value: &crit},
-	}}}
 	return p
 }
 
@@ -283,24 +285,29 @@ func sel(metric, matchers string) string { return metric + "{" + matchers + "}" 
 func Build() Dashboard {
 	rows := []Row{
 		row("At a glance",
-			stat("Max NB ACLs on a node", "short", 2, "", `ovnk:nb_db_objects:max_by_table{table="ACL"}`),
-			stat("Max NB PortGroups on a node", "short", 2, "", `ovnk:nb_db_objects:max_by_table{table="Port_Group"}`),
-			stat("Largest NB DB", "bytes", 2, "", `max(ovn_db_db_size_bytes{db_name="OVN_Northbound"})`),
-			gauge("PortGroup amplification", 2, 5, 10, 200, `ovnk:portgroup_amplification:ratio`),
-			stat("Network programming p99", "s", 2, "2,10", `ovnk:network_programming:p99_5m`),
-			stat("Retry failures 15m", "short", 1, "", `sum(increase(ovnkube_resource_retry_failures_total[15m]))`),
-			stat("Nodes disconnected", "short", 1, "1,1",
-				`count(ovn_northd_nb_connection_status == 0 or ovn_northd_sb_connection_status == 0 or ovn_controller_southbound_database_connected == 0) or vector(0)`),
+			stat("Max NB ACLs on a node", "short", 2, nil, `ovnk:nb_db_objects:max_by_table{table="ACL"}`),
+			stat("Max NB PortGroups on a node", "short", 2, nil, `ovnk:nb_db_objects:max_by_table{table="Port_Group"}`),
+			stat("Largest NB DB", "bytes", 2, nil, `max(ovn_db_db_size_bytes{db_name="OVN_Northbound"})`),
+			amplification(),
+			programmingP99(),
+			stat("Retry failures 15m", "short", 1, nil, `sum(increase(ovnkube_resource_retry_failures_total[15m]))`),
+			// One series per ovnkube-node pod (one per node) with any OVN DB
+			// connection down, not one per down connection.
+			stat("Nodes disconnected", "short", 1, []Threshold{step(colorOK, -1), step(colorCrit, 0.5)},
+				`count(count by (namespace, pod) (ovn_northd_nb_connection_status == 0 or ovn_northd_sb_connection_status == 0 or ovn_controller_southbound_database_connected == 0)) or vector(0)`),
 		),
 		row("Scale & inventory",
-			graph("Kubernetes network objects", "short", 6,
+			graph("Kubernetes network objects", "short", 4,
 				t(`sum by (managed_by) (`+cluster("ovnkube_clustermanager_network_attachment_definitions")+`)`, "NADs ({{managed_by}})"),
 				t(`sum(`+cluster("ovnkube_clustermanager_multi_network_policies")+`)`, "MultiNetworkPolicies"),
-				t(`sum(`+cluster("ovnkube_clustermanager_multi_network_policy_network_targets")+`)`, "MultiNetworkPolicy network targets"),
 				t(`sum(`+cluster("ovnkube_clustermanager_network_policies")+`)`, "NetworkPolicies"),
 				t(`sum by (kind) (`+cluster("ovnkube_clustermanager_user_defined_networks")+`)`, "{{kind}}"),
 			),
-			graph("NB objects per node by table", "short", 6,
+			// Network targets outnumber the other objects by orders of
+			// magnitude, so they get their own axis.
+			graph("MultiNetworkPolicy network targets", "short", 4,
+				t(`sum(`+cluster("ovnkube_clustermanager_multi_network_policy_network_targets")+`)`, "MultiNetworkPolicy network targets")),
+			graph("NB objects per node by table", "short", 4,
 				t(sel("ovnk:nb_db_objects:sum_by_node_table", nodeSel), "{{node}} {{table}}")),
 			table("Top networks by ACL / PortGroup", 4, []string{"network", "table"},
 				col(`topk(15, ovnk:nb_db_objects:max_by_network_table{table=~"ACL|Port_Group",network=~"$network"})`, "Objects (max over nodes)")),
@@ -322,7 +329,8 @@ func Build() Dashboard {
 				t(`histogram_quantile(0.99, sum by (le) (`+join(rate("ovnkube_controller_resource_add_latency_seconds_bucket"))+`))`, "add"),
 				t(`histogram_quantile(0.99, sum by (le) (`+join(rate("ovnkube_controller_resource_update_latency_seconds_bucket"))+`))`, "update"),
 				t(`histogram_quantile(0.99, sum by (le) (`+join(rate("ovnkube_controller_resource_delete_latency_seconds_bucket"))+`))`, "delete")),
-			stacked(graph("Pod setup pipeline p99", "s", 4, t(`ovnk:pod_setup_stage:p99_5m`, "{{stage}}"))),
+			describe(graph("Pod setup pipeline p99", "s", 4, t(`ovnk:pod_setup_stage:p99_5m`, "{{stage}}")),
+				"p99 per pod-setup stage over 5m. Per-stage p99s are not additive, so the lines are not stacked."),
 			graph("Retry failures by node", "short", 4,
 				t(`sum by (node) (`+join(rate("ovnkube_resource_retry_failures_total"))+`)`, "{{node}}")),
 			graph("NB→SB lag / probe staleness", "s", 4,
@@ -331,8 +339,8 @@ func Build() Dashboard {
 		),
 		row("NB/SB DB health",
 			graph("DB size", "bytes", 6, t(join("ovn_db_db_size_bytes"), "{{node}} {{db_name}}")),
-			graph("DB growth per hour", "bytes", 6,
-				t(sel("ovnk:ovn_db_size_bytes:deriv_30m", nodeSel)+` * 3600`, "{{node}} {{db_name}}")),
+			noMin(graph("DB growth per hour", "bytes", 6,
+				t(sel("ovnk:ovn_db_size_bytes:deriv_30m", nodeSel)+` * 3600`, "{{node}} {{db_name}}"))),
 			graph("nbdb/sbdb CPU", "short", 4,
 				t(`sum by (node, container) (`+rate(sel("container_cpu_usage_seconds_total", ovnNS+`,container=~"nbdb|sbdb",`+nodeSel))+`)`, "{{node}} {{container}}")),
 			graph("nbdb/sbdb RSS", "bytes", 4,
@@ -372,9 +380,10 @@ func Build() Dashboard {
 				t(join("ovn_controller_integration_bridge_openflow_total"), "{{node}}")),
 		),
 		row("Exporter self-cost",
-			graph("Exporter CPU / RSS", "short", 6,
-				t(`sum by (node) (`+rate(`container_cpu_usage_seconds_total{namespace="ovnk-observ",container="exporter"}`)+`)`, "{{node}} CPU cores"),
-				t(`sum by (node) (container_memory_working_set_bytes{namespace="ovnk-observ",container="exporter"})`, "{{node}} working set bytes")),
+			graph("Exporter CPU", "short", 3,
+				t(`sum by (node, pod) (`+rate(`container_cpu_usage_seconds_total{namespace="ovnk-observ",container="exporter"}`)+`)`, "{{node}} {{pod}}")),
+			graph("Exporter memory (working set)", "bytes", 3,
+				t(`sum by (node, pod) (container_memory_working_set_bytes{namespace="ovnk-observ",container="exporter"})`, "{{node}} {{pod}}")),
 			table("DB connected / initial sync", 6, []string{"node", "db"},
 				col(`max by (node, db) (ovnk_observ_db_connected)`, "Connected"),
 				col(`max by (node, db) (ovnk_observ_initial_sync_seconds)`, "Initial sync (s)")),
@@ -423,6 +432,25 @@ func Build() Dashboard {
 		}},
 		Rows: rows,
 	}
+}
+
+// amplification is NB Port_Groups per policy. The console has no dial, so it
+// is a singlestat colored at the same levels as the alert.
+func amplification() Panel {
+	p := stat("PortGroup amplification", "short", 2, warnCrit(5, 10), `ovnk:portgroup_amplification:ratio`)
+	p.Decimals = new(int)
+	*p.Decimals = 1
+	p.Description = "≥5 warn, ≥10 critical (alert fires >10)"
+	return p
+}
+
+// programmingP99 shows the recording rule as-is: it is NaN when no
+// network-programming events happened in the window, which reads "idle".
+func programmingP99() Panel {
+	p := stat("Network programming p99", "s", 2, warnCrit(2, 10), `ovnk:network_programming:p99_5m`)
+	p.ValueMaps = []ValueMap{{Op: "=", Text: "idle", Value: "NaN"}, {Op: "=", Text: "no data", Value: "null"}}
+	p.Description = "p99 over 5m; 'idle' = no network-programming events in the window"
+	return p
 }
 
 func queryVar(label string) Variable {

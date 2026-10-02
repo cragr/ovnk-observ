@@ -24,7 +24,7 @@
 - Node DaemonSet resources: requests `50m`/`64Mi`, limits `500m`/`256Mi`.
 - Reconnect backoff: exponential, start 1s, factor 2, cap 5m.
 - The exporter never sends `transact`; only `monitor` and `echo` replies.
-- Dashboard ConfigMap `grafana-dashboard-ovn-scale-troubleshooting` in `openshift-config-managed`, label `console.openshift.io/dashboard: "true"`, data key `ovn-scale-troubleshooting.json`. Title `Networking / OVN-Kubernetes Scale & Troubleshooting`. Panel types limited to `graph`, `singlestat`, `table`, `gauge`, `row` (types already rendered by this cluster's console).
+- Dashboard ConfigMap `grafana-dashboard-ovn-scale-troubleshooting` in `openshift-config-managed`, label `console.openshift.io/dashboard: "true"`, data key `ovn-scale-troubleshooting.json`. Title `Networking / OVN-K Observ`. Panel types limited to `graph`, `singlestat`, `table`, `gauge`, `row` (types already rendered by this cluster's console).
 - Lab: node arch `amd64`; NB schema 7.18.0, SB schema 21.8.0; socket paths `/var/run/ovn/ovnnb_db.sock`, `/var/run/ovn/ovnsb_db.sock`.
 
 ## Review Focus

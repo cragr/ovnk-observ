@@ -9,7 +9,7 @@ metadata:
 data:
   ovn-scale-troubleshooting.json: |-
     {
-      "title": "Networking / OVN-Kubernetes Scale & Troubleshooting",
+      "title": "Networking / OVN-K Observ",
       "uid": "ovnk-scale-troubleshooting",
       "tags": [
         "networking",
@@ -193,9 +193,10 @@ data:
             {
               "id": 4,
               "title": "PortGroup amplification",
-              "type": "gauge",
+              "type": "singlestat",
               "span": 2,
               "datasource": "$datasource",
+              "description": "≥5 warn, ≥10 critical (alert fires >10)",
               "targets": [
                 {
                   "expr": "ovnk:portgroup_amplification:ratio",
@@ -204,36 +205,22 @@ data:
                 }
               ],
               "format": "short",
-              "thresholds": "5,10",
-              "colors": [
-                "rgba(50, 172, 45, 0.97)",
-                "rgba(237, 129, 40, 0.89)",
-                "rgba(245, 54, 54, 0.9)"
-              ],
-              "colorValue": true,
               "valueName": "current",
-              "decimals": 0,
-              "gauge": {
-                "minValue": 0,
-                "maxValue": 200,
-                "show": true,
-                "thresholdLabels": false,
-                "thresholdMarkers": true
-              },
+              "decimals": 1,
               "options": {
                 "fieldOptions": {
                   "thresholds": [
                     {
                       "color": "green",
-                      "value": null
+                      "value": -1
                     },
                     {
-                      "color": "yellow",
-                      "value": 5
+                      "color": "light-yellow",
+                      "value": 4.999999999999999
                     },
                     {
-                      "color": "red",
-                      "value": 10
+                      "color": "light-red",
+                      "value": 9.999999999999998
                     }
                   ]
                 }
@@ -248,6 +235,7 @@ data:
               "type": "singlestat",
               "span": 2,
               "datasource": "$datasource",
+              "description": "p99 over 5m; 'idle' = no network-programming events in the window",
               "targets": [
                 {
                   "expr": "ovnk:network_programming:p99_5m",
@@ -256,14 +244,37 @@ data:
                 }
               ],
               "format": "s",
-              "thresholds": "2,10",
-              "colors": [
-                "rgba(50, 172, 45, 0.97)",
-                "rgba(237, 129, 40, 0.89)",
-                "rgba(245, 54, 54, 0.9)"
-              ],
-              "colorValue": true,
               "valueName": "current",
+              "options": {
+                "fieldOptions": {
+                  "thresholds": [
+                    {
+                      "color": "green",
+                      "value": -1
+                    },
+                    {
+                      "color": "light-yellow",
+                      "value": 1.9999999999999998
+                    },
+                    {
+                      "color": "light-red",
+                      "value": 9.999999999999998
+                    }
+                  ]
+                }
+              },
+              "valueMaps": [
+                {
+                  "op": "=",
+                  "text": "idle",
+                  "value": "NaN"
+                },
+                {
+                  "op": "=",
+                  "text": "no data",
+                  "value": "null"
+                }
+              ],
               "sparkline": {
                 "show": false
               }
@@ -295,20 +306,27 @@ data:
               "datasource": "$datasource",
               "targets": [
                 {
-                  "expr": "count(ovn_northd_nb_connection_status == 0 or ovn_northd_sb_connection_status == 0 or ovn_controller_southbound_database_connected == 0) or vector(0)",
+                  "expr": "count(count by (namespace, pod) (ovn_northd_nb_connection_status == 0 or ovn_northd_sb_connection_status == 0 or ovn_controller_southbound_database_connected == 0)) or vector(0)",
                   "legendFormat": "",
                   "refId": "A"
                 }
               ],
               "format": "short",
-              "thresholds": "1,1",
-              "colors": [
-                "rgba(50, 172, 45, 0.97)",
-                "rgba(237, 129, 40, 0.89)",
-                "rgba(245, 54, 54, 0.9)"
-              ],
-              "colorValue": true,
               "valueName": "current",
+              "options": {
+                "fieldOptions": {
+                  "thresholds": [
+                    {
+                      "color": "green",
+                      "value": -1
+                    },
+                    {
+                      "color": "light-red",
+                      "value": 0.5
+                    }
+                  ]
+                }
+              },
               "sparkline": {
                 "show": false
               }
@@ -325,7 +343,7 @@ data:
               "id": 8,
               "title": "Kubernetes network objects",
               "type": "graph",
-              "span": 6,
+              "span": 4,
               "datasource": "$datasource",
               "targets": [
                 {
@@ -339,19 +357,14 @@ data:
                   "refId": "B"
                 },
                 {
-                  "expr": "sum(max without (instance, pod, endpoint, container, service) (ovnkube_clustermanager_multi_network_policy_network_targets))",
-                  "legendFormat": "MultiNetworkPolicy network targets",
-                  "refId": "C"
-                },
-                {
                   "expr": "sum(max without (instance, pod, endpoint, container, service) (ovnkube_clustermanager_network_policies))",
                   "legendFormat": "NetworkPolicies",
-                  "refId": "D"
+                  "refId": "C"
                 },
                 {
                   "expr": "sum by (kind) (max without (instance, pod, endpoint, container, service) (ovnkube_clustermanager_user_defined_networks))",
                   "legendFormat": "{{kind}}",
-                  "refId": "E"
+                  "refId": "D"
                 }
               ],
               "lines": true,
@@ -391,9 +404,57 @@ data:
             },
             {
               "id": 9,
+              "title": "MultiNetworkPolicy network targets",
+              "type": "graph",
+              "span": 4,
+              "datasource": "$datasource",
+              "targets": [
+                {
+                  "expr": "sum(max without (instance, pod, endpoint, container, service) (ovnkube_clustermanager_multi_network_policy_network_targets))",
+                  "legendFormat": "MultiNetworkPolicy network targets",
+                  "refId": "A"
+                }
+              ],
+              "lines": true,
+              "linewidth": 1,
+              "fill": 1,
+              "nullPointMode": "null",
+              "legend": {
+                "show": true,
+                "alignAsTable": false,
+                "rightSide": false,
+                "current": false,
+                "max": false,
+                "values": false
+              },
+              "tooltip": {
+                "shared": true,
+                "sort": 2,
+                "value_type": "individual"
+              },
+              "xaxis": {
+                "mode": "time",
+                "show": true
+              },
+              "yaxes": [
+                {
+                  "format": "short",
+                  "logBase": 1,
+                  "min": 0,
+                  "show": true
+                },
+                {
+                  "format": "short",
+                  "logBase": 1,
+                  "show": false
+                }
+              ]
+            },
+            {
+              "id": 10,
               "title": "NB objects per node by table",
               "type": "graph",
-              "span": 6,
+              "span": 4,
               "datasource": "$datasource",
               "targets": [
                 {
@@ -438,7 +499,7 @@ data:
               ]
             },
             {
-              "id": 10,
+              "id": 11,
               "title": "Top networks by ACL / PortGroup",
               "type": "table",
               "span": 4,
@@ -489,7 +550,7 @@ data:
               "transform": "table"
             },
             {
-              "id": 11,
+              "id": 12,
               "title": "NB ACL vs SB Logical_Flow",
               "type": "graph",
               "span": 4,
@@ -542,7 +603,7 @@ data:
               ]
             },
             {
-              "id": 12,
+              "id": 13,
               "title": "ACLs by owner type",
               "type": "graph",
               "span": 4,
@@ -598,7 +659,7 @@ data:
           "showTitle": true,
           "panels": [
             {
-              "id": 13,
+              "id": 14,
               "title": "Network programming p50/p99",
               "type": "graph",
               "span": 6,
@@ -656,7 +717,7 @@ data:
               ]
             },
             {
-              "id": 14,
+              "id": 15,
               "title": "Resource add/update/delete p99",
               "type": "graph",
               "span": 6,
@@ -714,11 +775,12 @@ data:
               ]
             },
             {
-              "id": 15,
+              "id": 16,
               "title": "Pod setup pipeline p99",
               "type": "graph",
               "span": 4,
               "datasource": "$datasource",
+              "description": "p99 per pod-setup stage over 5m. Per-stage p99s are not additive, so the lines are not stacked.",
               "targets": [
                 {
                   "expr": "ovnk:pod_setup_stage:p99_5m",
@@ -728,8 +790,7 @@ data:
               ],
               "lines": true,
               "linewidth": 1,
-              "fill": 3,
-              "stack": true,
+              "fill": 1,
               "nullPointMode": "null",
               "legend": {
                 "show": true,
@@ -763,7 +824,7 @@ data:
               ]
             },
             {
-              "id": 16,
+              "id": 17,
               "title": "Retry failures by node",
               "type": "graph",
               "span": 4,
@@ -811,7 +872,7 @@ data:
               ]
             },
             {
-              "id": 17,
+              "id": 18,
               "title": "NB→SB lag / probe staleness",
               "type": "graph",
               "span": 4,
@@ -872,7 +933,7 @@ data:
           "showTitle": true,
           "panels": [
             {
-              "id": 18,
+              "id": 19,
               "title": "DB size",
               "type": "graph",
               "span": 6,
@@ -920,7 +981,7 @@ data:
               ]
             },
             {
-              "id": 19,
+              "id": 20,
               "title": "DB growth per hour",
               "type": "graph",
               "span": 6,
@@ -957,7 +1018,6 @@ data:
                 {
                   "format": "bytes",
                   "logBase": 1,
-                  "min": 0,
                   "show": true
                 },
                 {
@@ -968,7 +1028,7 @@ data:
               ]
             },
             {
-              "id": 20,
+              "id": 21,
               "title": "nbdb/sbdb CPU",
               "type": "graph",
               "span": 4,
@@ -1016,7 +1076,7 @@ data:
               ]
             },
             {
-              "id": 21,
+              "id": 22,
               "title": "nbdb/sbdb RSS",
               "type": "graph",
               "span": 4,
@@ -1064,7 +1124,7 @@ data:
               ]
             },
             {
-              "id": 22,
+              "id": 23,
               "title": "Sessions & monitors",
               "type": "graph",
               "span": 4,
@@ -1117,7 +1177,7 @@ data:
               ]
             },
             {
-              "id": 23,
+              "id": 24,
               "title": "Connection status",
               "type": "table",
               "span": 6,
@@ -1190,7 +1250,7 @@ data:
               "transform": "table"
             },
             {
-              "id": 24,
+              "id": 25,
               "title": "libovsdb disconnects",
               "type": "graph",
               "span": 6,
@@ -1246,7 +1306,7 @@ data:
           "showTitle": true,
           "panels": [
             {
-              "id": 25,
+              "id": 26,
               "title": "NB update rate by table/op",
               "type": "graph",
               "span": 6,
@@ -1294,7 +1354,7 @@ data:
               ]
             },
             {
-              "id": 26,
+              "id": 27,
               "title": "northd txn rate by result",
               "type": "graph",
               "span": 6,
@@ -1357,7 +1417,7 @@ data:
               ]
             },
             {
-              "id": 27,
+              "id": 28,
               "title": "ovn-controller txn rate by result",
               "type": "graph",
               "span": 6,
@@ -1420,7 +1480,7 @@ data:
               ]
             },
             {
-              "id": 28,
+              "id": 29,
               "title": "Txn failure ratio",
               "type": "graph",
               "span": 6,
@@ -1476,7 +1536,7 @@ data:
           "showTitle": true,
           "panels": [
             {
-              "id": 29,
+              "id": 30,
               "title": "northd loop p95 / max",
               "type": "graph",
               "span": 6,
@@ -1529,7 +1589,7 @@ data:
               ]
             },
             {
-              "id": 30,
+              "id": 31,
               "title": "northd build_lflows / nb_db_run / sb_db_run p95",
               "type": "graph",
               "span": 6,
@@ -1587,7 +1647,7 @@ data:
               ]
             },
             {
-              "id": 31,
+              "id": 32,
               "title": "ovn-controller lflow_run rate",
               "type": "graph",
               "span": 4,
@@ -1635,7 +1695,7 @@ data:
               ]
             },
             {
-              "id": 32,
+              "id": 33,
               "title": "Flow generation / installation p95",
               "type": "graph",
               "span": 4,
@@ -1688,7 +1748,7 @@ data:
               ]
             },
             {
-              "id": 33,
+              "id": 34,
               "title": "br-int OpenFlow count",
               "type": "graph",
               "span": 4,
@@ -1744,21 +1804,16 @@ data:
           "showTitle": true,
           "panels": [
             {
-              "id": 34,
-              "title": "Exporter CPU / RSS",
+              "id": 35,
+              "title": "Exporter CPU",
               "type": "graph",
-              "span": 6,
+              "span": 3,
               "datasource": "$datasource",
               "targets": [
                 {
-                  "expr": "sum by (node) (rate(container_cpu_usage_seconds_total{namespace=\"ovnk-observ\",container=\"exporter\"}[$interval]))",
-                  "legendFormat": "{{node}} CPU cores",
+                  "expr": "sum by (node, pod) (rate(container_cpu_usage_seconds_total{namespace=\"ovnk-observ\",container=\"exporter\"}[$interval]))",
+                  "legendFormat": "{{node}} {{pod}}",
                   "refId": "A"
-                },
-                {
-                  "expr": "sum by (node) (container_memory_working_set_bytes{namespace=\"ovnk-observ\",container=\"exporter\"})",
-                  "legendFormat": "{{node}} working set bytes",
-                  "refId": "B"
                 }
               ],
               "lines": true,
@@ -1797,7 +1852,55 @@ data:
               ]
             },
             {
-              "id": 35,
+              "id": 36,
+              "title": "Exporter memory (working set)",
+              "type": "graph",
+              "span": 3,
+              "datasource": "$datasource",
+              "targets": [
+                {
+                  "expr": "sum by (node, pod) (container_memory_working_set_bytes{namespace=\"ovnk-observ\",container=\"exporter\"})",
+                  "legendFormat": "{{node}} {{pod}}",
+                  "refId": "A"
+                }
+              ],
+              "lines": true,
+              "linewidth": 1,
+              "fill": 1,
+              "nullPointMode": "null",
+              "legend": {
+                "show": true,
+                "alignAsTable": false,
+                "rightSide": false,
+                "current": false,
+                "max": false,
+                "values": false
+              },
+              "tooltip": {
+                "shared": true,
+                "sort": 2,
+                "value_type": "individual"
+              },
+              "xaxis": {
+                "mode": "time",
+                "show": true
+              },
+              "yaxes": [
+                {
+                  "format": "bytes",
+                  "logBase": 1,
+                  "min": 0,
+                  "show": true
+                },
+                {
+                  "format": "short",
+                  "logBase": 1,
+                  "show": false
+                }
+              ]
+            },
+            {
+              "id": 37,
               "title": "DB connected / initial sync",
               "type": "table",
               "span": 6,
