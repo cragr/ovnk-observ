@@ -2,8 +2,6 @@ PROMETHEUS_VERSION ?= 3.5.0
 HOST_OS := $(shell go env GOOS)
 HOST_ARCH := $(shell go env GOARCH)
 
-NODE ?= <worker-node>
-
 IMG ?= quay.io/cragr/ovnk-observ-exporter
 VERSION ?= v0.1.0
 KUSTOMIZE ?= kustomize
@@ -74,6 +72,7 @@ verify-install-manifest:
 		{ echo "$(INSTALL_MANIFEST) does not use $(IMG):$(VERSION)" >&2; exit 1; }
 
 verify-counts:
+	@test -n "$(NODE)" || { echo "usage: make verify-counts NODE=<node-name>" >&2; exit 2; }
 	hack/verify-counts.sh $(NODE)
 
 integration:

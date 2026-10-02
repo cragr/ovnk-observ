@@ -26,7 +26,7 @@ The work ships upstream eventually. We prototype in a lab first.
 
 The lab reproduces a support case: 149 NADs and 3,150 MultiNetworkPolicies, all in namespace `<repro-namespace>`.
 
-Local NB/SB on `worker-0`:
+Local NB/SB on `<worker-node>`:
 
 | Object | Count |
 |---|---|
@@ -204,7 +204,7 @@ Makefile, Containerfile, go.mod
 2. **Integration:** real `ovsdb-server` with the OVN NB schema (`ovsdb-tool create`); insert N ACLs and PortGroups; assert `/metrics`.
 3. **Rules:** `promtool check rules` and `promtool test rules` with fixtures for every recording rule and alert.
 4. **Lab verification:**
-   - Exporter ACL and PortGroup counts on `worker-0` equal `ovsdb-client` counts (baseline 464,102 / 474,791 at time of measurement; re-measure at test time).
+   - Exporter ACL and PortGroup counts on `<worker-node>` equal `ovsdb-client` counts (baseline 464,102 / 474,791 at time of measurement; re-measure at test time).
    - `hack/verify-panels.sh` reports zero errors and non-empty results for every panel.
    - Exporter RSS stays under 256 Mi.
    - Dashboard renders in the console (browser screenshot).
