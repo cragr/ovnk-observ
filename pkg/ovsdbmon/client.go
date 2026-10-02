@@ -63,7 +63,7 @@ const (
 	monitorID           = "ovnk-observ"
 	defaultBackoffStart = time.Second
 	backoffCap          = 5 * time.Minute
-	stableAfter         = time.Minute // a connection this long resets backoff
+	stableAfter         = time.Minute // up this long after sync resets backoff
 	writeTimeout        = 10 * time.Second
 	readBufSize         = 256 << 10 // json.Decoder alone issues many tiny reads
 )
@@ -72,7 +72,8 @@ const (
 var testBackoffStart time.Duration
 
 // nextBackoff returns how long to wait now and the backoff to use next time,
-// given the current backoff and how long the last connection lasted.
+// given the current backoff and how long the last connection stayed up after
+// its initial sync (0 if it never synced).
 func nextBackoff(cur, start, lasted time.Duration) (wait, next time.Duration) {
 	if lasted >= stableAfter {
 		cur = start
@@ -85,7 +86,8 @@ func nextBackoff(cur, start, lasted time.Duration) (wait, next time.Duration) {
 }
 
 // Run connects, monitors and streams until ctx is cancelled, reconnecting with
-// exponential backoff (1s, x2, cap 5m; reset after a connection of >= 1m).
+// exponential backoff (1s, x2, cap 5m; reset to 1s only after a connection
+// that stayed up >= 1m past its initial sync).
 // After every disconnect the counter is Reset and OnState(false, 0) is called.
 // It returns ctx.Err() once ctx is done.
 func Run(ctx context.Context, cfg Config) error {
@@ -107,7 +109,7 @@ func Run(ctx context.Context, cfg Config) error {
 		}
 		var wait time.Duration
 		wait, backoff = nextBackoff(backoff, start, lasted)
-		log.Warn("ovsdb monitor disconnected; reconnecting", "err", err, "connected_for", lasted, "retry_in", wait)
+		log.Warn("ovsdb monitor disconnected; reconnecting", "err", err, "up_since_sync", lasted, "retry_in", wait)
 		t := time.NewTimer(wait)
 		select {
 		case <-ctx.Done():
@@ -163,8 +165,10 @@ func monitorRequest(cfg Config) ([]byte, error) {
 	}{"monitor", []any{cfg.Database, monitorID, reqs}, 1})
 }
 
-// runOnce handles a single connection. It returns how long the connection was
-// up (0 if it was never established) and the error that ended it.
+// runOnce handles a single connection. It returns how long the connection
+// stayed up after its initial sync completed (0 if it never synced, however
+// long the dump ran) and the error that ended it. Measuring from sync means a
+// huge dump that keeps failing after >1m never resets backoff to 1s.
 func runOnce(ctx context.Context, cfg Config, log *slog.Logger) (time.Duration, error) {
 	var d net.Dialer
 	nc, err := d.DialContext(ctx, "unix", cfg.Socket)
@@ -172,6 +176,13 @@ func runOnce(ctx context.Context, cfg Config, log *slog.Logger) (time.Duration, 
 		return 0, err
 	}
 	began := time.Now()
+	var syncedAt time.Time
+	upSinceSync := func() time.Duration {
+		if syncedAt.IsZero() {
+			return 0
+		}
+		return time.Since(syncedAt)
+	}
 	defer nc.Close()
 	stop := context.AfterFunc(ctx, func() { nc.Close() })
 	defer stop()
@@ -182,17 +193,17 @@ func runOnce(ctx context.Context, cfg Config, log *slog.Logger) (time.Duration, 
 		return 0, err
 	}
 	if err := c.write(req); err != nil {
-		return time.Since(began), fmt.Errorf("send monitor: %w", err)
+		return 0, fmt.Errorf("send monitor: %w", err)
 	}
 	s := newSession(json.NewDecoder(bufio.NewReaderSize(nc, readBufSize)), cfg, log, c.echoReply)
-	for synced := false; ; {
+	for {
 		kind, err := s.readMessage()
 		if err != nil {
-			return time.Since(began), err
+			return upSinceSync(), err
 		}
-		if kind == msgReply && !synced {
-			synced = true
-			took := time.Since(began)
+		if kind == msgReply && syncedAt.IsZero() {
+			syncedAt = time.Now()
+			took := syncedAt.Sub(began)
 			log.Info("ovsdb initial sync complete", "duration", took)
 			setState(cfg, true, took)
 		}

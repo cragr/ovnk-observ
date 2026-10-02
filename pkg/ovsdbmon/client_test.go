@@ -10,6 +10,7 @@ import (
 	"net"
 	"os"
 	"path/filepath"
+	"reflect"
 	"runtime"
 	"strconv"
 	"sync"
@@ -384,6 +385,27 @@ func TestMonitorStreamsLargeDumpWithinMemory(t *testing.T) {
 	fc := srv.accept(t, 3*time.Second)
 	fc.expectMonitor(t, "OVN_Northbound", aclOnly)
 
+	// Sample peak HeapInuse during the dump: a decoder that materialized the
+	// whole result and freed it afterwards would pass the post-GC check alone.
+	stopSampling := make(chan struct{})
+	peakCh := make(chan uint64, 1)
+	go func() {
+		var peak uint64
+		var ms runtime.MemStats
+		tick := time.NewTicker(5 * time.Millisecond)
+		defer tick.Stop()
+		for {
+			runtime.ReadMemStats(&ms)
+			peak = max(peak, ms.HeapInuse)
+			select {
+			case <-stopSampling:
+				peakCh <- peak
+				return
+			case <-tick.C:
+			}
+		}
+	}()
+
 	werr := make(chan error, 1)
 	go func() {
 		w := bufio.NewWriterSize(fc.c, 64<<10)
@@ -417,8 +439,14 @@ func TestMonitorStreamsLargeDumpWithinMemory(t *testing.T) {
 	if st := h.stateWithin(t, 2*time.Minute); !st.connected {
 		t.Fatalf("state %+v", st)
 	}
+	close(stopSampling)
+	peak := <-peakCh
 	if err := <-werr; err != nil {
 		t.Fatal(err)
+	}
+	t.Logf("peak HeapInuse during %d-row dump: %.1f MiB", rows, float64(peak)/(1<<20))
+	if peak >= 128<<20 {
+		t.Fatalf("peak HeapInuse %d >= 128 MiB", peak)
 	}
 	runtime.GC()
 	var ms runtime.MemStats
@@ -604,7 +632,14 @@ func TestParseMap(t *testing.T) {
 		{`["map",[["a","b"]]] x`, nil},
 		{`"map"`, nil},
 	}
-	for _, c := range cases {
+	for i, c := range cases {
+		fast, ok := parseMapFast([]byte(c.in))
+		if slow := parseMapSlow(json.RawMessage(c.in)); ok && !reflect.DeepEqual(fast, slow) {
+			t.Errorf("parseMapFast(%s) = %#v, parseMapSlow = %#v", c.in, fast, slow)
+		}
+		if i < 2 && !ok { // plain string maps must take the fast path
+			t.Errorf("parseMapFast(%s) not handled", c.in)
+		}
 		got := parseMap(json.RawMessage(c.in))
 		if len(got) != len(c.want) { // nil and empty are equivalent to callers
 			t.Errorf("parseMap(%s) = %#v, want %#v", c.in, got, c.want)
@@ -615,5 +650,43 @@ func TestParseMap(t *testing.T) {
 				t.Errorf("parseMap(%s) = %#v, want %#v", c.in, got, c.want)
 			}
 		}
+	}
+}
+
+// runOnce must report uptime measured from initial sync, never from dial: a
+// connection that dies mid-dump (however long it lasted) must not reset
+// backoff, or a ~1 GB dump that fails after >1m is re-requested every minute.
+func TestRunOnceUptimeCountsFromSync(t *testing.T) {
+	srv := newFakeServer(t)
+	cfg := Config{Socket: srv.path(), Database: "OVN_Northbound", Tables: aclOnly, Counter: nbcount.NewCounter()}
+	log := slog.Default()
+
+	// Never synced: server holds the connection 100ms, sends a partial dump, closes.
+	res := make(chan time.Duration, 1)
+	go func() { up, _ := runOnce(context.Background(), cfg, log); res <- up }()
+	fc := srv.accept(t, 3*time.Second)
+	fc.expectMonitor(t, "OVN_Northbound", aclOnly)
+	fc.write(t, `{"id":1,"error":null,"result":{"ACL":{"`+u1+`":{"new":{}}`)
+	time.Sleep(100 * time.Millisecond)
+	fc.c.Close()
+	if up := <-res; up != 0 {
+		t.Fatalf("unsynced connection reported uptime %v, want 0", up)
+	}
+	if w, _ := nextBackoff(4*time.Minute, time.Second, 0); w != 4*time.Minute {
+		t.Fatalf("unsynced connection reset backoff: wait %v", w)
+	}
+
+	// Synced: uptime counts from the reply, not from dial.
+	go func() { up, _ := runOnce(context.Background(), cfg, log); res <- up }()
+	fc = srv.accept(t, 3*time.Second)
+	fc.expectMonitor(t, "OVN_Northbound", aclOnly)
+	time.Sleep(time.Second) // slow "dump": must not count
+	fc.write(t, threeACLDump())
+	fc.barrier(t, "synced")
+	time.Sleep(50 * time.Millisecond)
+	fc.c.Close()
+	up := <-res
+	if up < 50*time.Millisecond || up >= time.Second {
+		t.Fatalf("synced uptime %v, want ~50ms measured from sync", up)
 	}
 }
