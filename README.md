@@ -50,7 +50,7 @@ The console renders `gauge` panels as plain numbers, so the dashboard has no dia
 
 ```
 make verify-counts    # compare exporter row counts with ovsdb-server on one node (NODE=<node>)
-make verify-panels    # run every dashboard panel query against Thanos and report OK, EMPTY, or ERROR
+make verify-panels    # run every dashboard panel query against Thanos and report OK, OK(idle), EMPTY, or ERROR
 make test             # unit tests
 make rules-test       # promtool rule tests
 make integration      # ovsdbmon against a real ovsdb-server
