@@ -195,3 +195,121 @@ tests:
               pod: ovnkube-node-x
             exp_annotations:
               summary: "OVN Northbound DB on A is growing 60MB/h"
+
+  # Rollout overlap: old and new node-mode exporter pods for the same node are
+  # both scraped and report the same counts. Per-node sums must not double.
+  - interval: 1m
+    input_series:
+      - series: 'ovnkube_controller_nb_db_objects{node="A",table="ACL",owner_type="NetworkPolicy",network="default",namespace="ovnk-observ",pod="node-old",instance="10.0.0.1:9410",endpoint="metrics",container="exporter",service="ovnk-observ-node"}'
+        values: '464102x10'
+      - series: 'ovnkube_controller_nb_db_objects{node="A",table="ACL",owner_type="NetworkPolicy",network="default",namespace="ovnk-observ",pod="node-new",instance="10.0.0.2:9410",endpoint="metrics",container="exporter",service="ovnk-observ-node"}'
+        values: '464102x10'
+      - series: 'ovnkube_controller_nb_db_objects{node="A",table="Port_Group",owner_type="NetworkPolicy",network="default",namespace="ovnk-observ",pod="node-old",instance="10.0.0.1:9410",endpoint="metrics",container="exporter",service="ovnk-observ-node"}'
+        values: '474791x10'
+      - series: 'ovnkube_controller_nb_db_objects{node="A",table="Port_Group",owner_type="NetworkPolicy",network="default",namespace="ovnk-observ",pod="node-new",instance="10.0.0.2:9410",endpoint="metrics",container="exporter",service="ovnk-observ-node"}'
+        values: '474791x10'
+      - series: 'ovnkube_controller_sb_db_objects{node="A",table="Logical_Flow",namespace="ovnk-observ",pod="node-old",instance="10.0.0.1:9410",endpoint="metrics",container="exporter",service="ovnk-observ-node"}'
+        values: '1562x10'
+      - series: 'ovnkube_controller_sb_db_objects{node="A",table="Logical_Flow",namespace="ovnk-observ",pod="node-new",instance="10.0.0.2:9410",endpoint="metrics",container="exporter",service="ovnk-observ-node"}'
+        values: '1562x10'
+      - series: 'ovnkube_clustermanager_multi_network_policies{namespace="ns1",pod="cm"}'
+        values: '3150x10'
+      - series: 'ovnkube_clustermanager_network_policies{namespace="ns1",pod="cm"}'
+        values: '157x10'
+    promql_expr_test:
+      - expr: ovnk:nb_db_objects:sum_by_node_table{table="ACL"}
+        eval_time: 5m
+        exp_samples:
+          - labels: 'ovnk:nb_db_objects:sum_by_node_table{node="A",table="ACL"}'
+            value: 464102
+      - expr: ovnk:nb_db_objects:max_by_table{table="ACL"}
+        eval_time: 5m
+        exp_samples:
+          - labels: 'ovnk:nb_db_objects:max_by_table{table="ACL"}'
+            value: 464102
+      - expr: ovnk:nb_db_objects:max_by_network_table{table="ACL"}
+        eval_time: 5m
+        exp_samples:
+          - labels: 'ovnk:nb_db_objects:max_by_network_table{network="default",table="ACL"}'
+            value: 464102
+      - expr: ovnk:portgroup_amplification:ratio * 3307
+        eval_time: 5m
+        exp_samples:
+          - labels: '{}'
+            value: 474791
+      - expr: ovnk:nb_sb_effectiveness:ratio * 464102
+        eval_time: 5m
+        exp_samples:
+          - labels: '{node="A"}'
+            value: 1562
+
+  # Network programming p99 over 1h, overall and by kind. pod events land in
+  # (0,1], networkpolicy events in (10,20], 100/min each.
+  - interval: 1m
+    input_series:
+      - series: 'ovnkube_controller_network_programming_duration_seconds_bucket{namespace="openshift-ovn-kubernetes",pod="ovnkube-node-x",kind="pod",le="1"}'
+        values: '0+100x60'
+      - series: 'ovnkube_controller_network_programming_duration_seconds_bucket{namespace="openshift-ovn-kubernetes",pod="ovnkube-node-x",kind="pod",le="10"}'
+        values: '0+100x60'
+      - series: 'ovnkube_controller_network_programming_duration_seconds_bucket{namespace="openshift-ovn-kubernetes",pod="ovnkube-node-x",kind="pod",le="20"}'
+        values: '0+100x60'
+      - series: 'ovnkube_controller_network_programming_duration_seconds_bucket{namespace="openshift-ovn-kubernetes",pod="ovnkube-node-x",kind="pod",le="+Inf"}'
+        values: '0+100x60'
+      - series: 'ovnkube_controller_network_programming_duration_seconds_bucket{namespace="openshift-ovn-kubernetes",pod="ovnkube-node-x",kind="networkpolicy",le="1"}'
+        values: '0x60'
+      - series: 'ovnkube_controller_network_programming_duration_seconds_bucket{namespace="openshift-ovn-kubernetes",pod="ovnkube-node-x",kind="networkpolicy",le="10"}'
+        values: '0x60'
+      - series: 'ovnkube_controller_network_programming_duration_seconds_bucket{namespace="openshift-ovn-kubernetes",pod="ovnkube-node-x",kind="networkpolicy",le="20"}'
+        values: '0+100x60'
+      - series: 'ovnkube_controller_network_programming_duration_seconds_bucket{namespace="openshift-ovn-kubernetes",pod="ovnkube-node-x",kind="networkpolicy",le="+Inf"}'
+        values: '0+100x60'
+    alert_rule_test:
+      - eval_time: 10m
+        alertname: OVNKNetworkProgrammingSlow
+        exp_alerts: []
+      - eval_time: 20m
+        alertname: OVNKNetworkProgrammingSlow
+        exp_alerts:
+          - exp_labels:
+              severity: warning
+            exp_annotations:
+              summary: "Network programming p99 latency is 19.8s"
+    promql_expr_test:
+      - expr: round(ovnk:network_programming:p99_1h, 0.001)
+        eval_time: 30m
+        exp_samples:
+          - labels: '{}'
+            value: 19.8
+      - expr: round(ovnk:network_programming:p99_1h_by_kind, 0.001)
+        eval_time: 30m
+        exp_samples:
+          - labels: '{kind="pod"}'
+            value: 0.99
+          - labels: '{kind="networkpolicy"}'
+            value: 19.9
+
+  # Sparse events: one burst at minute 5, then quiet. A 5m window would give
+  # NaN at minute 40; the 1h window still reports the burst's p99.
+  - interval: 1m
+    input_series:
+      - series: 'ovnkube_controller_network_programming_duration_seconds_bucket{namespace="openshift-ovn-kubernetes",pod="ovnkube-node-x",kind="pod",le="1"}'
+        values: '0x60'
+      - series: 'ovnkube_controller_network_programming_duration_seconds_bucket{namespace="openshift-ovn-kubernetes",pod="ovnkube-node-x",kind="pod",le="10"}'
+        values: '0x4 10x55'
+      - series: 'ovnkube_controller_network_programming_duration_seconds_bucket{namespace="openshift-ovn-kubernetes",pod="ovnkube-node-x",kind="pod",le="+Inf"}'
+        values: '0x4 10x55'
+      - series: 'ovnkube_controller_pod_first_seen_lsp_created_duration_seconds_bucket{namespace="openshift-ovn-kubernetes",pod="ovnkube-node-x",le="1"}'
+        values: '0x4 10x55'
+      - series: 'ovnkube_controller_pod_first_seen_lsp_created_duration_seconds_bucket{namespace="openshift-ovn-kubernetes",pod="ovnkube-node-x",le="+Inf"}'
+        values: '0x4 10x55'
+    promql_expr_test:
+      - expr: round(ovnk:network_programming:p99_1h, 0.001)
+        eval_time: 40m
+        exp_samples:
+          - labels: '{}'
+            value: 9.91
+      - expr: round(ovnk:pod_setup_stage:p99_1h, 0.001)
+        eval_time: 40m
+        exp_samples:
+          - labels: '{stage="first_seen_lsp"}'
+            value: 0.99

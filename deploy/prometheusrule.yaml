@@ -13,40 +13,43 @@ spec:
       rules:
         - record: ovnk:nb_db_objects:sum_by_node_table
           expr: |-
-            sum by (node, table) (ovnkube_controller_nb_db_objects)
+            sum by (node, table) (max without (instance, pod, endpoint, container, service) (ovnkube_controller_nb_db_objects))
         - record: ovnk:nb_db_objects:max_by_table
           expr: |-
             max by (table) (ovnk:nb_db_objects:sum_by_node_table)
         - record: ovnk:nb_db_objects:max_by_network_table
           expr: |-
-            max by (network, table) (sum by (node, network, table) (ovnkube_controller_nb_db_objects))
+            max by (network, table) (sum by (node, network, table) (max without (instance, pod, endpoint, container, service) (ovnkube_controller_nb_db_objects)))
         - record: ovnk:portgroup_amplification:ratio
           expr: |-
-            max(sum by (node) (ovnkube_controller_nb_db_objects{table="Port_Group",owner_type="NetworkPolicy"})) / clamp_min((sum(max without (instance, pod, endpoint, container, service) (ovnkube_clustermanager_multi_network_policies)) or vector(0)) + (sum(max without (instance, pod, endpoint, container, service) (ovnkube_clustermanager_network_policies)) or vector(0)), 1)
+            max(sum by (node) (max without (instance, pod, endpoint, container, service) (ovnkube_controller_nb_db_objects{table="Port_Group",owner_type="NetworkPolicy"}))) / clamp_min((sum(max without (instance, pod, endpoint, container, service) (ovnkube_clustermanager_multi_network_policies)) or vector(0)) + (sum(max without (instance, pod, endpoint, container, service) (ovnkube_clustermanager_network_policies)) or vector(0)), 1)
         - record: ovnk:nb_sb_effectiveness:ratio
           expr: |-
-            sum by (node) (ovnkube_controller_sb_db_objects{table="Logical_Flow"}) / clamp_min(sum by (node) (ovnkube_controller_nb_db_objects{table="ACL"}), 1)
-        - record: ovnk:network_programming:p99_5m
+            sum by (node) (max without (instance, pod, endpoint, container, service) (ovnkube_controller_sb_db_objects{table="Logical_Flow"})) / clamp_min(sum by (node) (max without (instance, pod, endpoint, container, service) (ovnkube_controller_nb_db_objects{table="ACL"})), 1)
+        - record: ovnk:network_programming:p99_1h
           expr: |-
-            histogram_quantile(0.99, sum by (le) (rate(ovnkube_controller_network_programming_duration_seconds_bucket[5m])))
-        - record: ovnk:pod_setup_stage:p99_5m
+            histogram_quantile(0.99, sum by (le) (rate(ovnkube_controller_network_programming_duration_seconds_bucket[1h])))
+        - record: ovnk:network_programming:p99_1h_by_kind
           expr: |-
-            histogram_quantile(0.99, sum by (le) (rate(ovnkube_controller_pod_first_seen_lsp_created_duration_seconds_bucket[5m])))
+            histogram_quantile(0.99, sum by (le, kind) (rate(ovnkube_controller_network_programming_duration_seconds_bucket[1h])))
+        - record: ovnk:pod_setup_stage:p99_1h
+          expr: |-
+            histogram_quantile(0.99, sum by (le) (rate(ovnkube_controller_pod_first_seen_lsp_created_duration_seconds_bucket[1h])))
           labels:
             stage: first_seen_lsp
-        - record: ovnk:pod_setup_stage:p99_5m
+        - record: ovnk:pod_setup_stage:p99_1h
           expr: |-
-            histogram_quantile(0.99, sum by (le) (rate(ovnkube_controller_pod_lsp_created_port_binding_duration_seconds_bucket[5m])))
+            histogram_quantile(0.99, sum by (le) (rate(ovnkube_controller_pod_lsp_created_port_binding_duration_seconds_bucket[1h])))
           labels:
             stage: lsp_port_binding
-        - record: ovnk:pod_setup_stage:p99_5m
+        - record: ovnk:pod_setup_stage:p99_1h
           expr: |-
-            histogram_quantile(0.99, sum by (le) (rate(ovnkube_controller_pod_port_binding_port_binding_chassis_duration_seconds_bucket[5m])))
+            histogram_quantile(0.99, sum by (le) (rate(ovnkube_controller_pod_port_binding_port_binding_chassis_duration_seconds_bucket[1h])))
           labels:
             stage: port_binding_chassis
-        - record: ovnk:pod_setup_stage:p99_5m
+        - record: ovnk:pod_setup_stage:p99_1h
           expr: |-
-            histogram_quantile(0.99, sum by (le) (rate(ovnkube_controller_pod_port_binding_chassis_port_binding_up_duration_seconds_bucket[5m])))
+            histogram_quantile(0.99, sum by (le) (rate(ovnkube_controller_pod_port_binding_chassis_port_binding_up_duration_seconds_bucket[1h])))
           labels:
             stage: chassis_up
         - record: ovnk:ovn_txn_failure:ratio_5m
@@ -111,7 +114,7 @@ spec:
           annotations:
             summary: "OVN {{ $labels.component }} transaction failure ratio on {{ $labels.node }} is {{ $value | printf \"%.4f\" }}"
         - alert: OVNKNetworkProgrammingSlow
-          expr: ovnk:network_programming:p99_5m > 10
+          expr: ovnk:network_programming:p99_1h > 10
           for: 15m
           labels:
             severity: warning
