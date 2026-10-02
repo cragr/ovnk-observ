@@ -18,7 +18,7 @@ Prerequisites: `oc` logged in as cluster-admin, Go 1.26, and podman (for release
 make build                    # compile bin/ovnk-observ-exporter (linux/amd64)
 make test                     # unit tests
 make deploy                   # dev: deploy/ plus the in-cluster BuildConfig (overlays/dev)
-make image-dev                # build the binary, build the image in-cluster, restart the pods
+make image-dev                # build the binary, build the image in-cluster, roll the pods onto it
 make rules-gen                # regenerate deploy/prometheusrule.yaml from rules/
 make dashboard                # regenerate dashboards/ and deploy/dashboard-configmap.yaml
 make dashboard-apply          # apply the dashboard ConfigMap to openshift-config-managed
@@ -41,7 +41,9 @@ make verify-install-manifest  # fail if install/ovnk-observ.yaml is stale or not
 make deploy-release           # apply install/ovnk-observ.yaml, as an admin would
 ```
 
-`VERSION` defaults to `v0.1.0` and `IMG` to `quay.io/cragr/ovnk-observ-exporter`. To cut a release, bump `VERSION` in the Makefile and the image tag in `deploy/node-daemonset.yaml` and `deploy/cluster-deployment.yaml`, then run `make install-manifest`. `make verify-install-manifest` catches a mismatch.
+`VERSION` defaults to `v0.1.0` and `IMG` to `quay.io/cragr/ovnk-observ-exporter`. The image tag lives only in the `images:` entry of `deploy/kustomization.yaml`. To cut a release, bump `VERSION` in the Makefile and run `make install-manifest`; it runs `make set-version` to update that entry, then renders the file. `make verify-install-manifest` changes no files and fails if the rendered file is stale or if the DaemonSet and Deployment do not both use `$(IMG):$(VERSION)`.
+
+The install manifest is rendered with kustomize `$(KUSTOMIZE_VERSION)` (v5.8.1), which `make tools` downloads to `bin/` alongside promtool. Other kustomize versions may format the output differently and make the verify step fail.
 
 ## Metrics
 

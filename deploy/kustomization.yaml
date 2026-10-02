@@ -1,13 +1,16 @@
 apiVersion: kustomize.config.k8s.io/v1beta1
 kind: Kustomization
 resources:
-  - namespace.yaml
-  - rbac.yaml
-  - node-daemonset.yaml
-  - cluster-deployment.yaml
-  - services.yaml
-  - servicemonitors.yaml
-  - prometheusrule.yaml
+- namespace.yaml
+- rbac.yaml
+- node-daemonset.yaml
+- cluster-deployment.yaml
+- services.yaml
+- servicemonitors.yaml
+- prometheusrule.yaml
 # Apply order: Namespace and PriorityClass first, workloads after RBAC.
 sortOptions:
   order: fifo
+images:
+- name: quay.io/cragr/ovnk-observ-exporter
+  newTag: v0.1.0

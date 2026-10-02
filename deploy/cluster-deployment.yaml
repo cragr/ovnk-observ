@@ -19,7 +19,8 @@ spec:
       priorityClassName: ovnk-observ
       containers:
         - name: exporter
-          image: quay.io/cragr/ovnk-observ-exporter:v0.1.0
+          # Tag comes from images: in kustomization.yaml (make set-version).
+          image: quay.io/cragr/ovnk-observ-exporter
           imagePullPolicy: IfNotPresent
           args:
             - --mode=cluster

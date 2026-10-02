@@ -9,7 +9,7 @@ You need:
 - OpenShift 4.20 or later with OVN-Kubernetes in interconnect (IC) mode. IC is the default since 4.14.
 - A user with `cluster-admin`.
 - The `oc` CLI, logged in to the cluster.
-- Pull access to `quay.io/cragr/ovnk-observ-exporter:v0.1.0`. On a disconnected cluster, mirror that image to your registry and add an `ImageDigestMirrorSet` or `ImageTagMirrorSet` for it before you install.
+- Pull access to `quay.io/cragr/ovnk-observ-exporter:v0.1.0`. The quay.io repository is public, so a connected cluster needs no pull secret. On a disconnected cluster, mirror the image to your registry and add an `ImageTagMirrorSet` for `quay.io/cragr/ovnk-observ-exporter` before you install. The manifest pulls by tag, and an `ImageDigestMirrorSet` applies only to pulls by digest.
 
 The manifest creates:
 
@@ -23,13 +23,13 @@ The manifest creates:
 
 ## 2. Install
 
-Apply the manifest from the release tag:
+Apply the manifest from the release tag (`v0.1.0` is the current release):
 
 ```
-oc apply -f https://raw.githubusercontent.com/cragr/ovnk-observ/<tag>/install/ovnk-observ.yaml
+oc apply -f https://raw.githubusercontent.com/cragr/ovnk-observ/v0.1.0/install/ovnk-observ.yaml
 ```
 
-The repository URL is a placeholder until the project is published. Until then, apply a local copy of `install/ovnk-observ.yaml`:
+The repository is not published yet, so this URL does not work until it is. Until then, apply a local copy of `install/ovnk-observ.yaml`:
 
 ```
 oc apply -f install/ovnk-observ.yaml
@@ -92,15 +92,21 @@ Re-applying the manifest reverts in-cluster edits. To keep a change, download `o
 
 ## 6. Uninstall
 
+Run one of these, matching how you installed:
+
 ```
-oc delete -f install/ovnk-observ.yaml
+# From the release URL
+oc delete --ignore-not-found -f https://raw.githubusercontent.com/cragr/ovnk-observ/v0.1.0/install/ovnk-observ.yaml
+
+# From a local copy
+oc delete --ignore-not-found -f install/ovnk-observ.yaml
 ```
 
-Use the same URL or file you installed from. This removes the namespace and everything in it, the cluster RBAC, the PriorityClass, and the dashboard ConfigMap in `openshift-config-managed`.
+`--ignore-not-found` makes the command safe to re-run. It removes the namespace and everything in it, the cluster RBAC, the PriorityClass, and the dashboard ConfigMap in `openshift-config-managed`.
 
 ## 7. Troubleshoot
 
 - **Node pods stay Pending or the DaemonSet reports a SCC error**: check `oc get events -n ovnk-observ`. The pods need the `privileged` SCC through ClusterRoleBinding `ovnk-observ-node-scc`. Confirm that binding exists and that no admission policy blocks privileged pods in `ovnk-observ`.
-- **ImagePullBackOff**: the cluster cannot pull `quay.io/cragr/ovnk-observ-exporter:v0.1.0`. If quay.io is not reachable, mirror the image (see section 1). If you copied it to a private repository, add a pull secret to the `ovnk-observ-node` and `ovnk-observ-cluster` service accounts.
+- **ImagePullBackOff**: the cluster cannot pull `quay.io/cragr/ovnk-observ-exporter:v0.1.0`. The quay.io repository is public, so a connected cluster needs no pull secret; check egress to quay.io. If quay.io is not reachable, mirror the image and add an `ImageTagMirrorSet` (see section 1); an `ImageDigestMirrorSet` does not cover this tag pull. If your mirror registry requires credentials, add them to the cluster global pull secret.
 - **`ovnk_observ_db_connected` is 0**: the node pod cannot reach the OVN sockets. The DaemonSet expects IC mode, where the sockets live in `/var/run/ovn-ic` on the host. A cluster without IC (central NB/SB) is not supported. Check the node pod log: `oc logs -n ovnk-observ ds/ovnk-observ-node`.
 - **Dashboard panels are empty right after install**: wait 1 to 2 minutes for the initial NB dump and the first scrapes. Rate and latency panels need several minutes of data. The "Network programming p99" stat shows "idle" until something is programmed.
