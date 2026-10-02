@@ -13,7 +13,10 @@ spec:
       interval: 30s
       scrapeTimeout: 20s
       relabelings:
-        - sourceLabels: [__meta_kubernetes_pod_node_name]
+        # action is spelled out: the API server defaults it, and leaving it
+        # out makes every apply report the ServiceMonitor as configured.
+        - action: replace
+          sourceLabels: [__meta_kubernetes_pod_node_name]
           targetLabel: node
 ---
 apiVersion: monitoring.coreos.com/v1

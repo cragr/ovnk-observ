@@ -5,9 +5,6 @@ metadata:
   namespace: ovnk-observ
   labels:
     app: ovnk-observ-node
-  annotations:
-    image.openshift.io/triggers: >-
-      [{"from":{"kind":"ImageStreamTag","name":"ovnk-observ-exporter:latest","namespace":"ovnk-observ"},"fieldPath":"spec.template.spec.containers[?(@.name==\"exporter\")].image"}]
 spec:
   selector:
     matchLabels:
@@ -33,7 +30,7 @@ spec:
         kubernetes.io/os: linux
       containers:
         - name: exporter
-          image: image-registry.openshift-image-registry.svc:5000/ovnk-observ/ovnk-observ-exporter:latest
+          image: quay.io/cragr/ovnk-observ-exporter:v0.1.0
           imagePullPolicy: IfNotPresent
           args:
             - --mode=node

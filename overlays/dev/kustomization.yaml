@@ -1,0 +1,16 @@
+# Dev overlay: build the image in-cluster (make image-dev) instead of pulling
+# the release image from quay.io.
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+resources:
+  - ../../deploy
+  - build.yaml
+images:
+  - name: quay.io/cragr/ovnk-observ-exporter
+    newName: ovnk-observ-exporter
+    newTag: latest
+patches:
+  - path: image-lookup.yaml
+    target:
+      kind: (DaemonSet|Deployment)
+      namespace: ovnk-observ

@@ -185,9 +185,10 @@ pkg/nbcount/                          # update handler + counters; no k8s deps
 pkg/k8scount/                         # informers for NAD/MNP/NP/UDN/CUDN
 pkg/metrics/                          # metric definitions, cardinality guard
 pkg/ovsdbmon/                         # minimal streaming OVSDB JSON-RPC monitor client
-deploy/                               # kustomize: namespace, RBAC, DaemonSet, Deployment,
-                                      # Services, ServiceMonitors, PrometheusRule,
-                                      # BuildConfig, ImageStream
+deploy/                               # kustomize base: namespace, RBAC, DaemonSet, Deployment,
+                                      # Services, ServiceMonitors, PrometheusRule (quay.io image)
+overlays/dev/                         # base + BuildConfig, ImageStream (in-cluster dev image)
+install/ovnk-observ.yaml              # rendered by make install-manifest; what admins apply
 dashboards/ovn-scale-troubleshooting.json
 hack/verify-panels.sh                 # runs every panel query against thanos-querier
 Makefile, Containerfile, go.mod
@@ -195,7 +196,7 @@ Makefile, Containerfile, go.mod
 
 - Go version matches ovn-kubernetes' `go.mod` where practical; node mode needs no libovsdb dependency.
 - Build: `make image-build` / `make image-push` publish `quay.io/cragr/ovnk-observ-exporter:<version>` (base `ubi9/ubi-micro:9.6`). For development, `make image-dev` runs a binary `BuildConfig` into the in-cluster registry.
-- `make deploy`, `make dashboard`, `make undeploy` (removes everything, including the dashboard).
+- `make deploy` (dev overlay), `make deploy-release` (install manifest), `make dashboard`, `make install-manifest`, `make undeploy` (removes everything, including the dashboard).
 
 ## 10. Testing
 

@@ -3,6 +3,10 @@ kind: ImageStream
 metadata:
   name: ovnk-observ-exporter
   namespace: ovnk-observ
+spec:
+  # Lets pods in this namespace use the short name ovnk-observ-exporter:latest.
+  lookupPolicy:
+    local: true
 ---
 apiVersion: build.openshift.io/v1
 kind: BuildConfig
