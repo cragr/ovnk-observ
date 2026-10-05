@@ -47,7 +47,32 @@ The install manifest is rendered with kustomize `$(KUSTOMIZE_VERSION)` (v5.8.1),
 
 ## Metrics
 
-The full catalog, with labels and the cardinality guard, is in [spec section 5](docs/superpowers/specs/2026-10-02-ovnk-observ-dashboard-design.md#5-metric-catalog). Exporter metrics are served on `:9410/metrics`. Recording rules and alerts are in `rules/ovnk-observ-rules.yaml`.
+The full catalog, with labels and the cardinality guard, is in [spec section 5](docs/superpowers/specs/2026-10-02-ovnk-observ-dashboard-design.md#5-metric-catalog). The incident amendment adds the metrics below ([amendment section 5](docs/superpowers/specs/2026-10-05-ovnk-observ-incident-amendment-design.md#5-metric-catalog-additions)). Exporter metrics are served on `:9410/metrics`. Recording rules and alerts are in `rules/ovnk-observ-rules.yaml`.
+
+New exporter flags:
+
+| Flag | Mode | Default | Effect |
+|---|---|---|---|
+| `--pg-drift` | node | `true` | Monitor NB `Port_Group.ports` and SB `Port_Group.name`; export the drift gauges |
+| `--inc-engine` | node | `true` | Read northd `inc-engine/show-stats` on each scrape |
+| `--inc-engine-nodes` | node | `northd,lflow,port_group,sync_to_sb_addr_set,sync_from_sb,ls_stateful,lr_stateful` | Engine nodes to export |
+| `--churn-manager-label` | cluster | `topN:10` | `off` drops the `manager` label; `topN:<n>` keeps the first n distinct managers |
+
+New metrics:
+
+| Metric | Labels |
+|---|---|
+| `ovnkube_controller_port_group_sb_missing` | none (node comes from the scrape target) |
+| `ovnkube_controller_port_group_with_ports` | none |
+| `ovn_northd_inc_engine_runs_total` | `engine_node`, `type` (`recompute`, `compute`, `cancel`) |
+| `ovnkube_clustermanager_object_events_total` | `resource` (`nad`, `mnp`, `networkpolicy`, `udn`, `cudn`), `op` (`add`, `update`, `delete`), `manager` |
+| `ovnkube_clustermanager_multi_network_policy_rules` | `namespace`, `direction` |
+| `ovnkube_clustermanager_multi_network_policy_peers` | `namespace`, `direction` |
+| `ovnk_observ_appctl_errors_total` | `command` |
+
+New recording rules: `ovnk:ovn_pod_node:info`, `ovnk:pg_drift:missing_by_node`, `ovnk:pg_drift:nodes`, `ovnk:northd_recompute:ratio_15m`, `ovnk:northd_full_recompute:increase_5m`, `ovnk:object_events:rate_5m`. New alerts: `OVNKPortGroupSBDrift`, `OVNKNorthdRecomputeHigh`, `OVNKPolicyChurnHigh`.
+
+The only appctl command the exporter sends is `inc-engine/show-stats`. It is read-only, and no other command is reachable.
 
 ## Dashboard
 
@@ -72,6 +97,9 @@ After a deploy or rollout, allow 1 to 2 minutes before running `verify-counts` o
 - Prototype. The metrics are named for upstream adoption but are not in OVN-Kubernetes today.
 - The cluster exporter discovers CRDs once at start. A CRD installed later (for example, UDN) or a transient discovery error leaves that resource unwatched until the cluster pod restarts.
 - The node DaemonSet hard-codes the OVN-IC hostPath `/var/run/ovn-ic`. It does not work in non-IC (central) mode.
+- northd `.ctl` discovery reads `ovn-northd.pid` beside the NB socket and connects to `ovn-northd.<pid>.ctl`. This is not yet confirmed on a live cluster. If it fails, inc-engine series are absent and `ovnk_observ_appctl_errors_total` increases.
+- Drift is exported only while both NB and SB are synced. During the initial dump or a reconnect the series are absent, not zero.
+- The churn `manager` label is first-N: the first N distinct managers seen keep their own value for the life of the process, and later ones count under `_other`. The assignment resets on restart.
 - The initial dump of about 940k rows takes tens of seconds, during which the object series are absent.
 
 ## Upstream path

@@ -1,7 +1,7 @@
 # OVN-K Observ — Incident-Driven Amendment — Design
 
 - **Date:** 2026-10-05
-- **Status:** Proposed; awaiting review
+- **Status:** Implemented (pending lab gate)
 - **Amends:** [2026-10-02 dashboard design](2026-10-02-ovnk-observ-dashboard-design.md), sections 4, 5, 6, 7, 8, 10, 12
 - **Source:** a production incident bridge (OVN-IC, multiple clusters, MultiNetworkPolicy at scale). No customer names, hosts, addresses, or policy names appear here.
 
@@ -102,10 +102,10 @@ Rows follow the triage path: consistent? → what is changing? → is processing
 | Row | Question | Panels | Change |
 |---|---|---|---|
 | 0. At a glance | Is it healthy and in sync? | Nodes with PG drift (crit > 0); worst northd recompute ratio; max NB→SB lag; nodes disconnected; retry failures 15m; ovnkube-node restarts 1h; nodes not Ready | Max ACL/PG and largest NB DB move to row 3 |
-| 1. Consistency | Which nodes need a recompute? | Table: nodes with drift > 0 (missing, with-ports, ratio); drift over time (topk 10); northd recompute ratio per engine node (topk 10 node×engine); full-recompute events (`increase` of `northd` recompute; marks manual remediation) | **New** |
+| 1. Consistency | Which nodes need a recompute? | Table: nodes with drift > 0 (missing, with-ports, ratio = `(ovnk:pg_drift:missing_by_node > 0) / on (node) clamp_min(<with-ports by node>, 1)`); drift over time (topk 10); northd recompute ratio per engine node (topk 10 node×engine); full-recompute events (`increase` of `northd` recompute; marks manual remediation) | **New** |
 | 2. Change & churn | What is changing, and who is writing? | Object events/min by resource and op; by `manager`; NB update rate by table/op (moved from row 4); txn failure ratio (moved) | Raw "northd txn rate by result" and "ovn-controller txn rate by result" graphs collapse into row 5 |
-| 3. Scale & fan-out | Is this scale? | Max NB ACLs, max PGs, largest NB DB (moved stats); K8s objects; MNP network targets; MNP rules and peers by direction; top networks by ACL/PG (table); ACLs by owner type; SB/NB effectiveness ratio | "NB objects per node by table" becomes a topk(10) table of node×table for ACL and Port_Group only. "NB ACL vs SB Logical_Flow" (2 lines per node) is replaced by `ovnk:nb_sb_effectiveness:ratio`, which is recorded today but unused. New panels "ACLs per MNP rule" and "Port_Groups per MNP". |
-| 4. Programming latency | Is OVN-K slow? | Network programming p50/p99 (1h); events/min; pod setup per stage (1h); retry failures by node (topk 10); NB→SB lag / staleness (topk 10) | "Resource add/update/delete p99" moves to a 1h window (it is NaN at `$interval` for the same sparse-event reason as programming latency) |
+| 3. Scale & fan-out | Is this scale? | Max NB ACLs, max PGs, largest NB DB (moved stats); K8s objects; MNP network targets; MNP rules and peers by direction; top networks by ACL/PG (table); ACLs by owner type; SB/NB effectiveness ratio | "NB objects per node by table" becomes a topk(10) table of node×table for ACL and Port_Group only. "NB ACL vs SB Logical_Flow" (2 lines per node) is replaced by `ovnk:nb_sb_effectiveness:ratio`, which is recorded today but unused. New panel "ACLs per MNP rule". "Port_Groups per MNP" is the existing PortGroup amplification stat (Port_Groups ÷ (MNP+NP)) in this row, not a separate panel. The top-networks-by-ACL/PortGroup table spans 6 (whole 12-column lines). |
+| 4. Programming latency | Is OVN-K slow? | Network programming p50/p99 (1h; the p99 singlestat was removed, the Programming latency graph covers it); events/min; pod setup per stage (1h); retry failures by node (topk 10); NB→SB lag / staleness (topk 10) | "Resource add/update/delete p99" moves to a 1h window (it is NaN at `$interval` for the same sparse-event reason as programming latency) |
 | 5. OVN internals (collapsed) | Which process is hurting? | northd loop p95/max; build_lflows / nb_db_run / sb_db_run; ovn-controller lflow_run; flow generation/installation; br-int flows; DB size and growth; nbdb/sbdb CPU and RSS; sessions and monitors; connection status; libovsdb disconnects; raw txn rates | Merges old rows 3 and 5 plus the raw txn graphs; collapsed by default |
 | 6. Exporter self-cost (collapsed) | What does observing cost? | Exporter CPU and memory; DB connected / initial sync; appctl errors | Adds appctl errors |
 
@@ -126,7 +126,7 @@ Rows follow the triage path: consistent? → what is changing? → is processing
 | `ovnk:pg_drift:nodes` | `count(ovnk:pg_drift:missing_by_node > 0) or vector(0)` |
 | `ovnk:northd_recompute:ratio_15m` | `increase(…{type="recompute"}[15m]) / clamp_min(increase(…{type=~"recompute\|compute"}[15m]), 1)` by node, engine_node |
 | `ovnk:northd_full_recompute:increase_5m` | `increase(ovn_northd_inc_engine_runs_total{engine_node="northd",type="recompute"}[5m])` by node |
-| `ovnk:object_events:rate_5m` | `sum by (resource, op) (rate(ovnkube_clustermanager_object_events_total[5m]))` |
+| `ovnk:object_events:rate_5m` | `sum by (resource, op) (rate(ovnkube_clustermanager_object_events_total[5m]))`; `resource` is `nad`, `mnp`, `networkpolicy`, `udn` or `cudn` |
 
 All existing rules that join to `kube_pod_info` switch to `ovnk:ovn_pod_node:info` (section 9).
 
@@ -136,7 +136,7 @@ All existing rules that join to `kube_pod_info` switch to `ovnk:ovn_pod_node:inf
 |---|---|---|
 | `OVNKPortGroupSBDrift` | `ovnk:pg_drift:missing_by_node > 0` | 10m (transient drift during normal churn clears in seconds) |
 | `OVNKNorthdRecomputeHigh` | `ovnk:northd_recompute:ratio_15m{engine_node=~"northd\|lflow"} > 0.5` | 30m |
-| `OVNKPolicyChurnHigh` | `sum(ovnk:object_events:rate_5m{resource="multinetworkpolicies",op="update"}) * 60 > 100` | 15m |
+| `OVNKPolicyChurnHigh` | `sum(ovnk:object_events:rate_5m{resource="mnp",op="update"}) * 60 > 100` | 15m |
 
 Thresholds are starting points; tune them on the lab and on the next incident's data.
 
