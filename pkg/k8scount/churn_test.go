@@ -104,3 +104,23 @@ func TestChurnSkipsInitialList(t *testing.T) {
 ovnkube_clustermanager_object_events_total{manager="unknown",op="add",resource="mnp"} 1
 `, churnMetricName)
 }
+
+func TestChurnUnknownBypassesSlots(t *testing.T) {
+	c := newChurn(1)
+	c.record("mnp", "update", "a")
+	c.record("mnp", "delete", unknownManager)
+	c.record("mnp", "update", "b")
+	c.record("mnp", "update", unknownManager)
+	compareChurn(t, c, `
+ovnkube_clustermanager_object_events_total{manager="_other",op="update",resource="mnp"} 1
+ovnkube_clustermanager_object_events_total{manager="a",op="update",resource="mnp"} 1
+ovnkube_clustermanager_object_events_total{manager="unknown",op="delete",resource="mnp"} 1
+ovnkube_clustermanager_object_events_total{manager="unknown",op="update",resource="mnp"} 1
+`)
+	// With off, the label stays empty even for unknown.
+	o := newChurn(0)
+	o.record("mnp", "delete", unknownManager)
+	compareChurn(t, o, `
+ovnkube_clustermanager_object_events_total{manager="",op="delete",resource="mnp"} 1
+`)
+}

@@ -77,7 +77,7 @@ Second goal: restructure the existing dashboard so the first screen answers ques
 | `ovnkube_controller_port_group_sb_missing` | gauge | — (node via target) | NB Port_Groups with ports and no SB Port_Group of the same name |
 | `ovnkube_controller_port_group_with_ports` | gauge | — | NB Port_Groups with at least one port (denominator) |
 | `ovn_northd_inc_engine_runs_total` | counter | `engine_node`, `type` (`recompute`/`compute`/`cancel`) | `inc-engine/show-stats`; allowlist below |
-| `ovnkube_clustermanager_object_events_total` | counter | `resource`, `op` (`add`/`update`/`delete`), `manager` | informer event handlers |
+| `ovnkube_clustermanager_object_events_total` | counter | `resource`, `op` (`add`/`update`/`delete`), `manager` | informer event handlers; the first N distinct managers keep their label for the life of the process, later ones count as `_other`, and `unknown` (deletes, objects without managedFields) never uses a slot |
 | `ovnkube_clustermanager_multi_network_policy_rules` | gauge | `namespace`, `direction` | Σ ingress / egress rule entries |
 | `ovnkube_clustermanager_multi_network_policy_peers` | gauge | `namespace`, `direction` | Σ `from` / `to` peer entries |
 | `ovnk_observ_appctl_errors_total` | counter | `command` | exporter self-metric |
@@ -93,7 +93,7 @@ The counter resets when northd restarts; `rate()` and `increase()` handle that.
 | `--pg-drift` | `true` | Monitor NB `Port_Group.ports` and SB `Port_Group.name`; export drift gauges |
 | `--inc-engine` | `true` | Poll northd `inc-engine/show-stats` on scrape |
 | `--inc-engine-nodes` | allowlist above | Engine nodes to export |
-| `--churn-manager-label` | `topN:10` | `off` drops the `manager` label |
+| `--churn-manager-label` | `topN:10` | `off` drops the `manager` label; `topN:<n>` keeps the first n distinct managers, later ones count as `_other`, `unknown` never uses a slot |
 
 ## 6. Dashboard restructure
 

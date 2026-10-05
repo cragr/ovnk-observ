@@ -50,6 +50,8 @@ func (c *churn) record(resource, op, manager string) {
 	switch {
 	case c.max <= 0:
 		manager = ""
+	case manager == unknownManager:
+		// Never takes a slot and is never folded into _other.
 	case c.seen[manager]:
 	case len(c.seen) < c.max:
 		c.seen[manager] = true
