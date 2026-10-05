@@ -13,6 +13,8 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"path/filepath"
+	"strings"
 	"syscall"
 	"time"
 
@@ -23,6 +25,8 @@ import (
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/rest"
 
+	"github.com/cragr/ovnk-observ/pkg/appctl"
+	"github.com/cragr/ovnk-observ/pkg/incengine"
 	"github.com/cragr/ovnk-observ/pkg/k8scount"
 	"github.com/cragr/ovnk-observ/pkg/metrics"
 	"github.com/cragr/ovnk-observ/pkg/nbcount"
@@ -51,6 +55,8 @@ func run(ctx context.Context, args []string, stdout io.Writer) error {
 	nbSock := fs.String("nb-socket", "/var/run/ovn/ovnnb_db.sock", "OVN northbound DB unix socket")
 	sbSock := fs.String("sb-socket", "/var/run/ovn/ovnsb_db.sock", "OVN southbound DB unix socket")
 	pgDrift := fs.Bool("pg-drift", true, "export NB/SB Port_Group drift metrics (node mode)")
+	incEngine := fs.Bool("inc-engine", true, "export northd inc-engine run counters (node mode)")
+	incNodes := fs.String("inc-engine-nodes", strings.Join(incengine.DefaultNodes, ","), "comma-separated inc-engine node allowlist")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
@@ -60,6 +66,18 @@ func run(ctx context.Context, args []string, stdout io.Writer) error {
 	labelMode, err := metrics.ParseNetworkLabelMode(*netLabels)
 	if err != nil {
 		return err
+	}
+
+	var engineNodes []string
+	if *mode == "node" && *incEngine {
+		for _, n := range strings.Split(*incNodes, ",") {
+			if n = strings.TrimSpace(n); n != "" {
+				engineNodes = append(engineNodes, n)
+			}
+		}
+		if len(engineNodes) == 0 {
+			return errors.New("--inc-engine-nodes must not be empty when --inc-engine is true")
+		}
 	}
 
 	slog.SetDefault(slog.New(slog.NewJSONHandler(os.Stderr, nil)))
@@ -91,6 +109,12 @@ func run(ctx context.Context, args []string, stdout io.Writer) error {
 					OnState: func(connected bool, d time.Duration) { st.Set(connected, d) },
 				})
 			}()
+		}
+		if *incEngine {
+			// The northd pid/ctl files sit beside the NB socket in the mounted OVN run dir.
+			runDir := filepath.Dir(*nbSock)
+			fetch := func(ctx context.Context) (string, error) { return appctl.ShowIncEngineStats(ctx, runDir) }
+			reg.MustRegister(incengine.NewCollector(fetch, engineNodes, 2*time.Second))
 		}
 		start("nb", "OVN_Northbound", *nbSock, nbTables, nb, nbState, nbHook)
 		start("sb", "OVN_Southbound", *sbSock, sbTables, sb, sbState, sbHook)
@@ -126,7 +150,7 @@ func run(ctx context.Context, args []string, stdout io.Writer) error {
 		return fmt.Errorf("listen: %w", err)
 	}
 	slog.Info("starting exporter", "mode", *mode, "listen", ln.Addr().String(),
-		"nb_socket", *nbSock, "sb_socket", *sbSock, "per_network_labels", *netLabels, "pg_drift", *pgDrift)
+		"nb_socket", *nbSock, "sb_socket", *sbSock, "per_network_labels", *netLabels, "pg_drift", *pgDrift, "inc_engine", *incEngine)
 	if onListen != nil {
 		onListen(ln.Addr().String())
 	}

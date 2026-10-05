@@ -23,6 +23,15 @@ func TestRunRejectsBadNetworkLabels(t *testing.T) {
 	}
 }
 
+func TestRunRejectsBadIncEngineNodes(t *testing.T) {
+	for _, v := range []string{"", " , "} {
+		err := run(context.Background(), []string{"--mode=node", "--inc-engine-nodes=" + v}, io.Discard)
+		if err == nil || !strings.Contains(err.Error(), "inc-engine-nodes") {
+			t.Fatalf("nodes %q: want inc-engine-nodes error, got %v", v, err)
+		}
+	}
+}
+
 func get(t *testing.T, url string) (int, string) {
 	t.Helper()
 	resp, err := http.Get(url)
@@ -59,6 +68,9 @@ func TestNodeModeServesMetricsWithoutSockets(t *testing.T) {
 	code, body := get(t, "http://"+addr+"/metrics")
 	if code != 200 || !strings.Contains(body, `ovnk_observ_db_connected{db="nb"} 0`) {
 		t.Fatalf("metrics (%d) missing connected gauge:\n%s", code, body)
+	}
+	if !strings.Contains(body, `ovnk_observ_appctl_errors_total{command="inc-engine/show-stats"}`) {
+		t.Fatalf("metrics missing appctl errors counter:\n%s", body)
 	}
 	cancel()
 	select {
