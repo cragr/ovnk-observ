@@ -70,3 +70,40 @@ func TestNodeModeServesMetricsWithoutSockets(t *testing.T) {
 		t.Fatal("no shutdown")
 	}
 }
+
+func TestNodeModePGDriftFlag(t *testing.T) {
+	addrCh := make(chan string, 1)
+	onListen = func(a string) { addrCh <- a }
+	defer func() { onListen = nil }()
+
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan error, 1)
+	go func() {
+		done <- run(ctx, []string{"--mode=node", "--pg-drift=false", "--listen=127.0.0.1:0",
+			"--nb-socket=/nonexistent/nb.sock", "--sb-socket=/nonexistent/sb.sock"}, io.Discard)
+	}()
+	var addr string
+	select {
+	case addr = <-addrCh:
+	case err := <-done:
+		t.Fatalf("run exited early: %v", err)
+	case <-time.After(5 * time.Second):
+		t.Fatal("timeout waiting for listen")
+	}
+	code, body := get(t, "http://"+addr+"/metrics")
+	if code != 200 || !strings.Contains(body, `ovnk_observ_db_connected{db="nb"} 0`) {
+		t.Fatalf("metrics (%d) missing connected gauge:\n%s", code, body)
+	}
+	if strings.Contains(body, "port_group_sb_missing") {
+		t.Fatalf("drift series present with --pg-drift=false:\n%s", body)
+	}
+	cancel()
+	select {
+	case err := <-done:
+		if err != nil {
+			t.Fatalf("shutdown err: %v", err)
+		}
+	case <-time.After(10 * time.Second):
+		t.Fatal("no shutdown")
+	}
+}

@@ -14,10 +14,12 @@ import (
 	"time"
 
 	"github.com/cragr/ovnk-observ/pkg/nbcount"
+	"github.com/cragr/ovnk-observ/pkg/pgdrift"
 )
 
 const (
 	itSchema   = "/usr/share/ovn/ovn-nb.ovsschema"
+	itSBSchema = "/usr/share/ovn/ovn-sb.ovsschema"
 	itACLs     = 1000
 	itPGs      = 500
 	itDelACLs  = 10
@@ -148,4 +150,83 @@ func TestMonitorAgainstRealOVSDBServer(t *testing.T) {
 		defer mu.Unlock()
 		return len(states) > 0 && !states[len(states)-1] && strings.Contains(fmt.Sprint(states), "true")
 	})
+}
+
+// itStartServer creates a database from schema and runs ovsdb-server on a unix
+// socket in dir, returning the socket path. The server is killed at cleanup.
+func itStartServer(t *testing.T, dir, name, schema string) string {
+	t.Helper()
+	dbFile := filepath.Join(dir, name+".db")
+	sock := filepath.Join(dir, name+".sock")
+	itRun(t, "ovsdb-tool", "create", dbFile, schema)
+	srv := exec.Command("ovsdb-server", "--remote=punix:"+sock,
+		"--unixctl="+filepath.Join(dir, name+".ctl"), "--pidfile="+filepath.Join(dir, name+".pid"), dbFile)
+	srv.Stdout, srv.Stderr = os.Stderr, os.Stderr
+	if err := srv.Start(); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		_ = srv.Process.Kill()
+		_ = srv.Wait()
+	})
+	itWait(t, 10*time.Second, name+" ovsdb-server socket", func() bool { _, err := os.Stat(sock); return err == nil })
+	return sock
+}
+
+func TestPGDriftAgainstRealOVSDBServer(t *testing.T) {
+	for _, b := range []string{"ovsdb-server", "ovsdb-tool", "ovn-nbctl", "ovn-sbctl"} {
+		if _, err := exec.LookPath(b); err != nil {
+			t.Fatalf("%s not in PATH (integration test must run where ovsdb tools exist)", b)
+		}
+	}
+	dir := t.TempDir()
+	nbSock := itStartServer(t, dir, "nb", itSchema)
+	sbSock := itStartServer(t, dir, "sb", itSBSchema)
+
+	itNbctl(t, nbSock,
+		[]string{"ls-add", "ls1"},
+		[]string{"lsp-add", "ls1", "lspA"},
+		[]string{"lsp-add", "ls1", "lspB"},
+		[]string{"pg-add", "pgA", "lspA"},
+		[]string{"pg-add", "pgB", "lspB"})
+	sbctl := func(args ...string) string {
+		return itRun(t, "ovn-sbctl", append([]string{"--db=unix:" + sbSock}, args...)...)
+	}
+	sbctl("create", "Port_Group", "name=1_pgA")
+	sbctl("create", "Port_Group", "name=1_pgB")
+
+	tr := pgdrift.NewTracker()
+	ctx, cancel := context.WithCancel(context.Background())
+	var wg sync.WaitGroup
+	for _, c := range []Config{
+		{Socket: nbSock, Database: "OVN_Northbound", Counter: nbcount.NewCounter(),
+			Tables: WithColumns(NBTables, "Port_Group", "name", "ports"), Hook: tr.NB()},
+		{Socket: sbSock, Database: "OVN_Southbound", Counter: nbcount.NewCounter(),
+			Tables: WithColumns(SBTables, "Port_Group", "name"), Hook: tr.SB()},
+	} {
+		wg.Add(1)
+		go func(c Config) { defer wg.Done(); _ = Run(ctx, c) }(c)
+	}
+	t.Cleanup(func() { cancel(); wg.Wait() })
+
+	waitMissing := func(wantMissing, wantWith int) {
+		t.Helper()
+		var m, w int
+		deadline := time.Now().Add(10 * time.Second)
+		for {
+			m, w = tr.Missing()
+			if m == wantMissing && w == wantWith {
+				return
+			}
+			if time.Now().After(deadline) {
+				t.Fatalf("Missing() = (%d, %d), want (%d, %d)", m, w, wantMissing, wantWith)
+			}
+			time.Sleep(25 * time.Millisecond)
+		}
+	}
+	waitMissing(0, 2)
+	sbctl("destroy", "Port_Group", "1_pgB")
+	waitMissing(1, 2)
+	sbctl("create", "Port_Group", "name=1_pgB")
+	waitMissing(0, 2)
 }

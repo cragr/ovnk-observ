@@ -27,6 +27,7 @@ import (
 	"github.com/cragr/ovnk-observ/pkg/metrics"
 	"github.com/cragr/ovnk-observ/pkg/nbcount"
 	"github.com/cragr/ovnk-observ/pkg/ovsdbmon"
+	"github.com/cragr/ovnk-observ/pkg/pgdrift"
 )
 
 // onListen, when set (tests only), receives the bound listen address.
@@ -49,6 +50,7 @@ func run(ctx context.Context, args []string, stdout io.Writer) error {
 	netLabels := fs.String("per-network-labels", "topN:50", `network label mode: "off" or "topN:<n>"`)
 	nbSock := fs.String("nb-socket", "/var/run/ovn/ovnnb_db.sock", "OVN northbound DB unix socket")
 	sbSock := fs.String("sb-socket", "/var/run/ovn/ovnsb_db.sock", "OVN southbound DB unix socket")
+	pgDrift := fs.Bool("pg-drift", true, "export NB/SB Port_Group drift metrics (node mode)")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
@@ -73,16 +75,25 @@ func run(ctx context.Context, args []string, stdout io.Writer) error {
 		nb, sb := nbcount.NewCounter(), nbcount.NewCounter()
 		nbState, sbState := &metrics.DBState{}, &metrics.DBState{}
 		reg.MustRegister(metrics.NewNodeCollector(nb, sb, nbState, sbState, labelMode))
-		start := func(name, db, sock string, tables []ovsdbmon.TableSpec, c *nbcount.Counter, st *metrics.DBState) {
+		nbTables, sbTables := ovsdbmon.NBTables, ovsdbmon.SBTables
+		var nbHook, sbHook ovsdbmon.RowHook
+		if *pgDrift {
+			tr := pgdrift.NewTracker()
+			nbTables = ovsdbmon.WithColumns(ovsdbmon.NBTables, "Port_Group", "name", "ports")
+			sbTables = ovsdbmon.WithColumns(ovsdbmon.SBTables, "Port_Group", "name")
+			nbHook, sbHook = tr.NB(), tr.SB()
+			reg.MustRegister(metrics.NewDriftCollector(tr, nbState, sbState))
+		}
+		start := func(name, db, sock string, tables []ovsdbmon.TableSpec, c *nbcount.Counter, st *metrics.DBState, hook ovsdbmon.RowHook) {
 			go func() {
 				_ = ovsdbmon.Run(ctx, ovsdbmon.Config{
-					Socket: sock, Database: db, Tables: tables, Counter: c,
+					Socket: sock, Database: db, Tables: tables, Counter: c, Hook: hook,
 					OnState: func(connected bool, d time.Duration) { st.Set(connected, d) },
 				})
 			}()
 		}
-		start("nb", "OVN_Northbound", *nbSock, ovsdbmon.NBTables, nb, nbState)
-		start("sb", "OVN_Southbound", *sbSock, ovsdbmon.SBTables, sb, sbState)
+		start("nb", "OVN_Northbound", *nbSock, nbTables, nb, nbState, nbHook)
+		start("sb", "OVN_Southbound", *sbSock, sbTables, sb, sbState, sbHook)
 	case "cluster":
 		cfg, err := rest.InClusterConfig()
 		if err != nil {
@@ -115,7 +126,7 @@ func run(ctx context.Context, args []string, stdout io.Writer) error {
 		return fmt.Errorf("listen: %w", err)
 	}
 	slog.Info("starting exporter", "mode", *mode, "listen", ln.Addr().String(),
-		"nb_socket", *nbSock, "sb_socket", *sbSock, "per_network_labels", *netLabels)
+		"nb_socket", *nbSock, "sb_socket", *sbSock, "per_network_labels", *netLabels, "pg_drift", *pgDrift)
 	if onListen != nil {
 		onListen(ln.Addr().String())
 	}
