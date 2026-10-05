@@ -119,3 +119,10 @@ func TestNodeModePGDriftFlag(t *testing.T) {
 		t.Fatal("no shutdown")
 	}
 }
+
+func TestRunRejectsBadChurnManagerLabel(t *testing.T) {
+	err := run(context.Background(), []string{"--mode=cluster", "--churn-manager-label=top:5"}, io.Discard)
+	if err == nil || !strings.Contains(err.Error(), "churn-manager-label") {
+		t.Fatalf("want churn-manager-label error, got %v", err)
+	}
+}

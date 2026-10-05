@@ -2,6 +2,7 @@ package k8scount
 
 import (
 	"strconv"
+	"time"
 
 	networkingv1 "k8s.io/api/networking/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -14,9 +15,13 @@ import (
 // 3150 MNPs are 54 MB of JSON). They are idempotent and pass through
 // anything that is not the expected type (e.g. DeletedFinalStateUnknown).
 
-// skeleton copies apiVersion, kind, name, namespace and resourceVersion.
+// skeleton copies apiVersion, kind, name, namespace and resourceVersion and
+// sets the private manager annotation.
 func skeleton(u *unstructured.Unstructured) (*unstructured.Unstructured, map[string]interface{}) {
-	md := map[string]interface{}{"name": u.GetName(), "namespace": u.GetNamespace()}
+	md := map[string]interface{}{"name": u.GetName(), "namespace": u.GetNamespace(),
+		"annotations": map[string]interface{}{
+			managerAnnotation: latestManager(u.GetManagedFields(), u.GetAnnotations()[managerAnnotation]),
+		}}
 	if rv := u.GetResourceVersion(); rv != "" {
 		md["resourceVersion"] = rv
 	}
@@ -35,13 +40,39 @@ const (
 	egressRulesAnnotation  = internalPrefix + "egress-rules"
 	ingressPeersAnnotation = internalPrefix + "ingress-peers"
 	egressPeersAnnotation  = internalPrefix + "egress-peers"
+	managerAnnotation      = internalPrefix + "manager"
 )
+
+// latestManager returns the Manager of the managedFields entry with the
+// latest Time; on equal or nil times the last such entry wins. With no
+// entries it keeps prev (an already-transformed object) or "unknown".
+func latestManager(entries []metav1.ManagedFieldsEntry, prev string) string {
+	if len(entries) == 0 {
+		if prev != "" {
+			return prev
+		}
+		return unknownManager
+	}
+	best, bestT := "", time.Time{}
+	for _, e := range entries {
+		var t time.Time
+		if e.Time != nil {
+			t = e.Time.Time
+		}
+		if !t.Before(bestT) {
+			best, bestT = e.Manager, t
+		}
+	}
+	return best
+}
 
 // ruleCounts returns the number of rules in spec[ruleKey] and the total
 // number of entries in each rule's peerKey list. Malformed rules count as
 // rules with no peers; nothing here panics on unexpected shapes.
 func ruleCounts(u *unstructured.Unstructured, ruleKey, peerKey string) (rules, peers int) {
-	list, _, _ := unstructured.NestedSlice(u.Object, "spec", ruleKey)
+	// NoCopy: NestedSlice deep-copies and panics on non-JSON values.
+	raw, _, _ := unstructured.NestedFieldNoCopy(u.Object, "spec", ruleKey)
+	list, _ := raw.([]interface{})
 	for _, r := range list {
 		rules++
 		if rm, ok := r.(map[string]interface{}); ok {
@@ -61,7 +92,7 @@ func transformMNP(obj interface{}) (interface{}, error) {
 		return obj, nil
 	}
 	out, md := skeleton(u)
-	ann := map[string]interface{}{}
+	ann := md["annotations"].(map[string]interface{})
 	if v, found := u.GetAnnotations()[policyForAnnotation]; found {
 		ann[policyForAnnotation] = v
 	}
@@ -80,9 +111,6 @@ func transformMNP(obj interface{}) (interface{}, error) {
 				ann[k] = v
 			}
 		}
-	}
-	if len(ann) > 0 {
-		md["annotations"] = ann
 	}
 	return out, nil
 }
@@ -142,7 +170,8 @@ func transformCUDN(obj interface{}) (interface{}, error) {
 	return transformUDNAt(obj, "spec", "network")
 }
 
-// transformNetworkPolicy keeps name, namespace and resourceVersion only.
+// transformNetworkPolicy keeps name, namespace, resourceVersion and the
+// manager annotation only.
 func transformNetworkPolicy(obj interface{}) (interface{}, error) {
 	p, ok := obj.(*networkingv1.NetworkPolicy)
 	if !ok {
@@ -150,5 +179,8 @@ func transformNetworkPolicy(obj interface{}) (interface{}, error) {
 	}
 	return &networkingv1.NetworkPolicy{ObjectMeta: metav1.ObjectMeta{
 		Name: p.Name, Namespace: p.Namespace, ResourceVersion: p.ResourceVersion,
+		Annotations: map[string]string{
+			managerAnnotation: latestManager(p.ManagedFields, p.Annotations[managerAnnotation]),
+		},
 	}}, nil
 }

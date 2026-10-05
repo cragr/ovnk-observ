@@ -33,6 +33,14 @@ func obj(gvk schema.GroupVersionKind, ns, name string, extra map[string]interfac
 
 func newCollector(t *testing.T, existing []schema.GroupVersionResource, np []*networkingv1.NetworkPolicy, objs ...runtime.Object) prometheus.Collector {
 	t.Helper()
+	c, _ := newCollectorOpts(t, Options{ManagerLabels: 10}, existing, np, objs...)
+	return c
+}
+
+// newCollectorOpts is newCollector with explicit Options; it also returns
+// the dynamic client so tests can create objects after the initial sync.
+func newCollectorOpts(t *testing.T, opts Options, existing []schema.GroupVersionResource, np []*networkingv1.NetworkPolicy, objs ...runtime.Object) (prometheus.Collector, *dynfake.FakeDynamicClient) {
+	t.Helper()
 	kinds := map[schema.GroupVersionResource]string{
 		nadGVR: "NetworkAttachmentDefinitionList", mnpGVR: "MultiNetworkPolicyList",
 		udnGVR: "UserDefinedNetworkList", cudnGVR: "ClusterUserDefinedNetworkList",
@@ -72,11 +80,11 @@ func newCollector(t *testing.T, existing []schema.GroupVersionResource, np []*ne
 	}
 	ctx, cancel := context.WithCancel(context.Background())
 	t.Cleanup(cancel)
-	c, err := NewCollector(ctx, dyn, kube)
+	c, err := NewCollector(ctx, dyn, kube, opts)
 	if err != nil {
 		t.Fatalf("NewCollector: %v", err)
 	}
-	return c
+	return c, dyn
 }
 
 // eventually polls until the collector output matches expected for names.

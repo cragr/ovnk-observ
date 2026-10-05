@@ -39,7 +39,7 @@ Second goal: restructure the existing dashboard so the first screen answers ques
 | Drift detail | Per-node count only; no per-policy label | Policy names are high-cardinality and customer-specific. Operators run the existing script on the flagged node. |
 | inc-engine stats | One hard-coded read-only appctl command over the northd control socket | Not exposed as a metric today; the command has no side effects |
 | inc-engine scope | Allowlist of computed engine nodes | ~75 nodes × 3 stats per node would be ~225 series per node, mostly input-node noise |
-| Churn attribution | Optional `manager` label from `managedFields`, top-N folded into `_other` | Names the writing controller without per-object cardinality |
+| Churn attribution | Optional `manager` label from `managedFields`: the first N distinct managers keep their own label value for the life of the process and every later manager counts under `_other` (a series cannot move between label values without breaking `rate()`); delete events use `manager="unknown"`, because the cached object names the last writer, not the deleter | Names the writing controller without per-object cardinality |
 | New flags default | Drift and inc-engine on; manager label `topN:10` | Each can be turned off for clusters where cost matters |
 
 **Principle change.** Section 8 of the base spec says "the exporter issues monitor requests only and never transacts." That still holds for the OVSDB sockets. The amendment adds one appctl call, `inc-engine/show-stats`, sent to the northd control socket. The command string is a constant; the exporter never sends any other appctl command, and `inc-engine/recompute` is never reachable from the exporter.

@@ -57,6 +57,7 @@ func run(ctx context.Context, args []string, stdout io.Writer) error {
 	pgDrift := fs.Bool("pg-drift", true, "export NB/SB Port_Group drift metrics (node mode)")
 	incEngine := fs.Bool("inc-engine", true, "export northd inc-engine run counters (node mode)")
 	incNodes := fs.String("inc-engine-nodes", strings.Join(incengine.DefaultNodes, ","), "comma-separated inc-engine node allowlist")
+	churnLabel := fs.String("churn-manager-label", "topN:10", `churn counter manager label: "off" or "topN:<n>"`)
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
@@ -66,6 +67,14 @@ func run(ctx context.Context, args []string, stdout io.Writer) error {
 	labelMode, err := metrics.ParseNetworkLabelMode(*netLabels)
 	if err != nil {
 		return err
+	}
+	churnMode, err := metrics.ParseNetworkLabelMode(*churnLabel)
+	if err != nil {
+		return fmt.Errorf("--churn-manager-label: %w", err)
+	}
+	managerLabels := churnMode.TopN
+	if churnMode.Off {
+		managerLabels = 0
 	}
 
 	var engineNodes []string
@@ -131,7 +140,7 @@ func run(ctx context.Context, args []string, stdout io.Writer) error {
 		if err != nil {
 			return err
 		}
-		col, err := k8scount.NewCollector(ctx, dyn, kube)
+		col, err := k8scount.NewCollector(ctx, dyn, kube, k8scount.Options{ManagerLabels: managerLabels})
 		if err != nil {
 			return err
 		}

@@ -39,15 +39,21 @@ type collector struct {
 	// is not served by the cluster.
 	informers map[string]cache.SharedIndexInformer
 
-	nads, mnps, mnpTargets, mnpRules, mnpPeers, nps, udns, synced *prometheus.Desc
+	churn *churn
+
+	nads, mnps, mnpTargets, mnpRules, mnpPeers, nps, udns, synced, events *prometheus.Desc
 }
 
 // NewCollector starts informers and returns immediately. Dynamic resources
 // are watched only if discovery reports them; a missing CRD leaves that
-// resource unsynced without error.
-func NewCollector(ctx context.Context, dyn dynamic.Interface, kube kubernetes.Interface) (prometheus.Collector, error) {
+// resource unsynced without error. It also counts informer add/update/delete
+// events (never the initial list) in the churn counter.
+func NewCollector(ctx context.Context, dyn dynamic.Interface, kube kubernetes.Interface, opts Options) (prometheus.Collector, error) {
 	c := &collector{
 		informers: map[string]cache.SharedIndexInformer{},
+		churn:     newChurn(opts.ManagerLabels),
+		events: prometheus.NewDesc(churnMetricName,
+			"Informer add/update/delete events by resource, op and last-writing manager.", []string{"resource", "op", "manager"}, nil),
 		nads: prometheus.NewDesc("ovnkube_clustermanager_network_attachment_definitions",
 			"Number of NetworkAttachmentDefinitions.", []string{"namespace", "managed_by"}, nil),
 		mnps: prometheus.NewDesc("ovnkube_clustermanager_multi_network_policies",
@@ -113,13 +119,20 @@ func NewCollector(ctx context.Context, dyn dynamic.Interface, kube kubernetes.In
 		}
 	}
 
+	// Handlers go on before the factories start so no event is missed.
+	for name, inf := range c.informers {
+		if _, err := inf.AddEventHandler(c.churn.handler(name)); err != nil {
+			return nil, fmt.Errorf("add %s event handler: %w", name, err)
+		}
+	}
+
 	np.Start(ctx.Done())
 	factory.Start(ctx.Done())
 	return c, nil
 }
 
 func (c *collector) Describe(ch chan<- *prometheus.Desc) {
-	for _, d := range []*prometheus.Desc{c.nads, c.mnps, c.mnpTargets, c.mnpRules, c.mnpPeers, c.nps, c.udns, c.synced} {
+	for _, d := range []*prometheus.Desc{c.nads, c.mnps, c.mnpTargets, c.mnpRules, c.mnpPeers, c.nps, c.udns, c.synced, c.events} {
 		ch <- d
 	}
 }
@@ -144,6 +157,7 @@ func annotationCount(v string) float64 {
 }
 
 func (c *collector) Collect(ch chan<- prometheus.Metric) {
+	c.churn.collect(ch, c.events)
 	for _, r := range resourceNames {
 		v := 0.0
 		if inf := c.informers[r]; inf != nil && inf.HasSynced() {

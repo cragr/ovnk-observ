@@ -46,6 +46,7 @@ func minimal(gvk schema.GroupVersionKind, metadata map[string]interface{}, rest 
 }
 
 func TestTransformsKeepOnlyCollectorFields(t *testing.T) {
+	kubectlMgr := map[string]interface{}{managerAnnotation: "kubectl"}
 	udnSpec := map[string]interface{}{
 		"topology": "Layer3",
 		"layer3":   map[string]interface{}{"role": "Primary", "subnets": []interface{}{"10.0.0.0/16"}},
@@ -63,14 +64,15 @@ func TestTransformsKeepOnlyCollectorFields(t *testing.T) {
 			minimal(mnpGVK, map[string]interface{}{"annotations": map[string]interface{}{
 				policyForAnnotation:    "default/a,default/b",
 				ingressRulesAnnotation: "1", ingressPeersAnnotation: "0",
-				egressRulesAnnotation: "0", egressPeersAnnotation: "0"}}, nil)},
+				egressRulesAnnotation: "0", egressPeersAnnotation: "0",
+				managerAnnotation: "kubectl"}}, nil)},
 		{"nad", transformNAD,
 			fat(nadGVK, map[string]interface{}{"config": `{"cniVersion":"0.4.0"}`}),
-			minimal(nadGVK, map[string]interface{}{"ownerReferences": []interface{}{map[string]interface{}{
+			minimal(nadGVK, map[string]interface{}{"annotations": kubectlMgr, "ownerReferences": []interface{}{map[string]interface{}{
 				"apiVersion": "k8s.ovn.org/v1", "kind": "UserDefinedNetwork", "name": "x", "uid": "u"}}}, nil)},
 		{"udn", transformUDN,
 			fat(udnGVK, udnSpec),
-			minimal(udnGVK, nil, map[string]interface{}{"spec": map[string]interface{}{
+			minimal(udnGVK, map[string]interface{}{"annotations": kubectlMgr}, map[string]interface{}{"spec": map[string]interface{}{
 				"topology": "Layer3",
 				"layer3":   map[string]interface{}{"role": "Primary"},
 				"layer2":   map[string]interface{}{"role": "Secondary"},
@@ -78,18 +80,20 @@ func TestTransformsKeepOnlyCollectorFields(t *testing.T) {
 		{"cudn", transformCUDN,
 			fat(cudnGVK, map[string]interface{}{"namespaceSelector": map[string]interface{}{}, "network": map[string]interface{}{
 				"topology": "Layer2", "layer2": map[string]interface{}{"role": "Secondary", "subnets": []interface{}{"x"}}}}),
-			minimal(cudnGVK, nil, map[string]interface{}{"spec": map[string]interface{}{"network": map[string]interface{}{
+			minimal(cudnGVK, map[string]interface{}{"annotations": kubectlMgr}, map[string]interface{}{"spec": map[string]interface{}{"network": map[string]interface{}{
 				"topology": "Layer2", "layer2": map[string]interface{}{"role": "Secondary"}}}})},
 		{"mnp without annotation", transformMNP,
 			obj(mnpGVK, "ns1", "o1", map[string]interface{}{"spec": map[string]interface{}{"x": "y"}}),
 			&unstructured.Unstructured{Object: map[string]interface{}{"apiVersion": mnpGVK.GroupVersion().String(), "kind": mnpGVK.Kind,
 				"metadata": map[string]interface{}{"name": "o1", "namespace": "ns1", "annotations": map[string]interface{}{
 					ingressRulesAnnotation: "0", ingressPeersAnnotation: "0",
-					egressRulesAnnotation: "0", egressPeersAnnotation: "0"}}}}},
+					egressRulesAnnotation: "0", egressPeersAnnotation: "0",
+					managerAnnotation: unknownManager}}}}},
 		{"udn without spec", transformUDN,
 			obj(udnGVK, "ns1", "o1", nil),
 			&unstructured.Unstructured{Object: map[string]interface{}{"apiVersion": udnGVK.GroupVersion().String(), "kind": udnGVK.Kind,
-				"metadata": map[string]interface{}{"name": "o1", "namespace": "ns1"}}}},
+				"metadata": map[string]interface{}{"name": "o1", "namespace": "ns1",
+					"annotations": map[string]interface{}{managerAnnotation: unknownManager}}}}},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -123,7 +127,8 @@ func TestTransformNetworkPolicyKeepsNameNamespace(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	want := &networkingv1.NetworkPolicy{ObjectMeta: metav1.ObjectMeta{Name: "p", Namespace: "ns", ResourceVersion: "7"}}
+	want := &networkingv1.NetworkPolicy{ObjectMeta: metav1.ObjectMeta{Name: "p", Namespace: "ns", ResourceVersion: "7",
+		Annotations: map[string]string{managerAnnotation: "m"}}}
 	if !reflect.DeepEqual(got, want) {
 		t.Fatalf("got %#v", got)
 	}
@@ -175,7 +180,7 @@ func TestCollectorCachesTransformedObjects(t *testing.T) {
 				t.Fatalf("mnp labels cached: %v", u.GetLabels())
 			}
 			p := nps[0].(*networkingv1.NetworkPolicy)
-			if len(p.Spec.PolicyTypes) != 0 || len(p.Annotations) != 0 {
+			if len(p.Spec.PolicyTypes) != 0 || len(p.Annotations) != 1 || p.Annotations[managerAnnotation] != unknownManager {
 				t.Fatalf("networkpolicy not stripped: %#v", p)
 			}
 			return
@@ -220,14 +225,83 @@ func TestTransformMNPKeepsCounts(t *testing.T) {
 }
 
 func TestTransformMNPMalformedSpecDoesNotPanic(t *testing.T) {
-	for _, spec := range []interface{}{
-		"str", []interface{}{},
-		map[string]interface{}{"ingress": "x", "egress": 5},
-		map[string]interface{}{"ingress": []interface{}{"s", nil, map[string]interface{}{"from": "bad"}}},
-	} {
-		u := obj(mnpGVK, "ns1", "o1", map[string]interface{}{"spec": spec})
-		if _, err := transformMNP(u); err != nil {
-			t.Fatal(err)
+	zero := map[string]string{ingressRulesAnnotation: "0", ingressPeersAnnotation: "0", egressRulesAnnotation: "0", egressPeersAnnotation: "0"}
+	with := func(over map[string]string) map[string]string {
+		m := map[string]string{}
+		for k, v := range zero {
+			m[k] = v
 		}
+		for k, v := range over {
+			m[k] = v
+		}
+		return m
+	}
+	for _, tc := range []struct {
+		name string
+		spec interface{}
+		want map[string]string
+	}{
+		{"string spec", "str", zero},
+		{"empty slice spec", []interface{}{}, zero},
+		{"non-list rules", map[string]interface{}{"ingress": "x", "egress": 5}, zero},
+		{"non-JSON slice", map[string]interface{}{"ingress": []int{1, 2}}, zero},
+		{"bad rules", map[string]interface{}{"ingress": []interface{}{"s", nil, map[string]interface{}{"from": "bad"}}},
+			with(map[string]string{ingressRulesAnnotation: "3"})},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			u := obj(mnpGVK, "ns1", "o1", map[string]interface{}{"spec": tc.spec})
+			got, err := transformMNP(u)
+			if err != nil {
+				t.Fatal(err)
+			}
+			for k, want := range tc.want {
+				if g := got.(*unstructured.Unstructured).GetAnnotations()[k]; g != want {
+					t.Errorf("%s = %q, want %q", k, g, want)
+				}
+			}
+		})
+	}
+}
+
+func TestTransformSetsLatestManager(t *testing.T) {
+	t1 := metav1.NewTime(time.Unix(1000, 0))
+	t2 := metav1.NewTime(time.Unix(2000, 0))
+	u := fat(nadGVK, nil)
+	u.SetManagedFields([]metav1.ManagedFieldsEntry{
+		{Manager: "m1", Time: &t1}, {Manager: "m2", Time: &t2}, {Manager: "m3"},
+	})
+	for name, fn := range map[string]cache.TransformFunc{"nad": transformNAD, "udn": transformUDN, "cudn": transformCUDN, "mnp": transformMNP} {
+		got, _ := fn(u)
+		if m := got.(*unstructured.Unstructured).GetAnnotations()[managerAnnotation]; m != "m2" {
+			t.Errorf("%s: manager = %q, want m2", name, m)
+		}
+	}
+	// Equal or nil times: the last entry wins.
+	u.SetManagedFields([]metav1.ManagedFieldsEntry{{Manager: "a"}, {Manager: "b"}})
+	got, _ := transformNAD(u)
+	if m := got.(*unstructured.Unstructured).GetAnnotations()[managerAnnotation]; m != "b" {
+		t.Errorf("nil times: manager = %q, want b", m)
+	}
+	// No entries: unknown. Already-transformed objects keep their manager.
+	u.SetManagedFields(nil)
+	got, _ = transformNAD(u)
+	if m := got.(*unstructured.Unstructured).GetAnnotations()[managerAnnotation]; m != unknownManager {
+		t.Errorf("no entries: manager = %q, want unknown", m)
+	}
+	kept := obj(nadGVK, "ns1", "o1", nil)
+	kept.SetAnnotations(map[string]string{managerAnnotation: "kept"})
+	got, _ = transformNAD(kept)
+	if m := got.(*unstructured.Unstructured).GetAnnotations()[managerAnnotation]; m != "kept" {
+		t.Errorf("idempotent: manager = %q, want kept", m)
+	}
+	np := &networkingv1.NetworkPolicy{ObjectMeta: metav1.ObjectMeta{Name: "p",
+		ManagedFields: []metav1.ManagedFieldsEntry{{Manager: "m1", Time: &t1}, {Manager: "m2", Time: &t2}}}}
+	gp, _ := transformNetworkPolicy(np)
+	if m := gp.(*networkingv1.NetworkPolicy).Annotations[managerAnnotation]; m != "m2" {
+		t.Errorf("networkpolicy: manager = %q, want m2", m)
+	}
+	again, _ := transformNetworkPolicy(gp)
+	if m := again.(*networkingv1.NetworkPolicy).Annotations[managerAnnotation]; m != "m2" {
+		t.Errorf("networkpolicy idempotent: manager = %q, want m2", m)
 	}
 }
