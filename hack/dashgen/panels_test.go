@@ -18,14 +18,14 @@ const (
 )
 
 func TestDashboardRows(t *testing.T) {
-	d := Build()
+	d := Build(Options{})
 	want := []string{
 		"At a glance",
-		"Scale & inventory",
-		"Programming latency & backlog",
-		"NB/SB DB health",
-		"Transactions & churn",
-		"Recompute cost",
+		"Consistency",
+		"Change & churn",
+		"Scale & fan-out",
+		"Programming latency",
+		"OVN internals",
 		"Exporter self-cost",
 	}
 	var got []string
@@ -35,10 +35,11 @@ func TestDashboardRows(t *testing.T) {
 	if !reflect.DeepEqual(got, want) {
 		t.Fatalf("row titles = %q, want %q", got, want)
 	}
+	// Only the last two rows (OVN internals, Exporter self-cost) start collapsed.
 	for i, r := range d.Rows {
-		last := i == len(d.Rows)-1
-		if r.Collapse != last {
-			t.Errorf("row %q collapse = %v, want %v", r.Title, r.Collapse, last)
+		want := i >= len(d.Rows)-2
+		if r.Collapse != want {
+			t.Errorf("row %q collapse = %v, want %v", r.Title, r.Collapse, want)
 		}
 	}
 }
@@ -47,7 +48,7 @@ func TestPanelsValid(t *testing.T) {
 	// "gauge" renders as a plain singlestat in the console, so it is not used.
 	allowed := map[string]bool{"graph": true, "singlestat": true, "table": true, "row": true}
 	seen := map[int]string{}
-	d := Build()
+	d := Build(Options{})
 	if len(d.Rows) == 0 {
 		t.Fatal("dashboard has no rows")
 	}
@@ -98,14 +99,14 @@ func TestPanelsValid(t *testing.T) {
 
 func TestJoinHelper(t *testing.T) {
 	got := join("ovn_db_db_size_bytes")
-	want := `ovn_db_db_size_bytes * on (namespace, pod) group_left(node) max by (namespace, pod, node) (kube_pod_info{node=~"$node"})`
+	want := `ovn_db_db_size_bytes * on (namespace, pod) group_left(node) ovnk:ovn_pod_node:info{node=~"$node"}`
 	if got != want {
 		t.Fatalf("join = %s\nwant  %s", got, want)
 	}
 }
 
 func TestTitleAndVariables(t *testing.T) {
-	d := Build()
+	d := Build(Options{})
 	if d.Title != wantTitle {
 		t.Errorf("title = %q, want %q", d.Title, wantTitle)
 	}
@@ -139,7 +140,7 @@ func TestTitleAndVariables(t *testing.T) {
 }
 
 func TestConfigMapWraps(t *testing.T) {
-	d := Build()
+	d := Build(Options{})
 	y, err := ConfigMapYAML(d)
 	if err != nil {
 		t.Fatal(err)
@@ -158,7 +159,7 @@ func TestConfigMapWraps(t *testing.T) {
 		}
 	}
 
-	// Pull the block scalar back out and compare it with Build().
+	// Pull the block scalar back out and compare it with Build(Options{}).
 	var block bytes.Buffer
 	in := false
 	sc := bufio.NewScanner(bytes.NewReader(y))
@@ -192,7 +193,7 @@ func TestConfigMapWraps(t *testing.T) {
 		t.Fatal(err)
 	}
 	if !reflect.DeepEqual(fromCM, fromBuild) {
-		t.Fatal("configmap JSON differs from Build() output")
+		t.Fatal("configmap JSON differs from Build(Options{}) output")
 	}
 	if strings.Contains(string(b), "\\u0026") {
 		t.Error("dashboard JSON HTML-escapes '&'; disable HTML escaping")
@@ -233,16 +234,16 @@ func consoleColor(steps []Threshold, v float64) string {
 
 func TestPanelCount(t *testing.T) {
 	n := 0
-	for _, r := range Build().Rows {
+	for _, r := range Build(Options{}).Rows {
 		n += len(r.Panels)
 	}
-	if n != 38 {
-		t.Errorf("panel count = %d, want 38", n)
+	if n != 52 {
+		t.Errorf("panel count = %d, want 52", n)
 	}
 }
 
 func TestSinglestatColorsUseFieldOptions(t *testing.T) {
-	for _, r := range Build().Rows {
+	for _, r := range Build(Options{}).Rows {
 		for _, p := range r.Panels {
 			if p.Type != "singlestat" {
 				continue
@@ -262,14 +263,18 @@ func TestSinglestatColorsUseFieldOptions(t *testing.T) {
 			}
 		}
 	}
-	d := Build()
+	d := Build(Options{})
 	cases := []struct {
 		title string
 		want  map[float64]string
 	}{
 		{"PortGroup amplification", map[float64]string{0: "green", 4.9: "green", 5: "light-yellow", 9.99: "light-yellow", 10: "light-red", 143.6: "light-red"}},
-		{"Network programming p99", map[float64]string{0: "green", 1.5: "green", 2: "light-yellow", 9.5: "light-yellow", 10: "light-red", 30: "light-red"}},
 		{"Nodes disconnected", map[float64]string{0: "green", 1: "light-red", 3: "light-red"}},
+		{"Nodes with PG drift", map[float64]string{0: "green", 1: "light-red", 4: "light-red"}},
+		{"Worst northd recompute ratio", map[float64]string{0: "green", 0.19: "green", 0.2: "light-yellow", 0.49: "light-yellow", 0.5: "light-red", 1: "light-red"}},
+		{"Max NB→SB lag", map[float64]string{0: "green", 9.9: "green", 10: "light-yellow", 29: "light-yellow", 30: "light-red"}},
+		{"ovnkube restarts 1h", map[float64]string{0: "green", 1: "light-yellow", 4: "light-yellow", 5: "light-red"}},
+		{"Nodes not Ready", map[float64]string{0: "green", 1: "light-red", 2: "light-red"}},
 	}
 	for _, c := range cases {
 		p := panelByTitle(t, d, c.title)
@@ -294,32 +299,8 @@ func TestSinglestatColorsUseFieldOptions(t *testing.T) {
 	}
 }
 
-func TestProgrammingP99ValueMaps(t *testing.T) {
-	p := panelByTitle(t, Build(), "Network programming p99")
-	// ">= 0" drops a NaN p99 (no events in the hour), so the console sees
-	// null, maps it to "idle", and colors it with the base (green) step.
-	want := []ValueMap{{Op: "=", Text: "idle", Value: "null"}}
-	if !reflect.DeepEqual(p.ValueMaps, want) {
-		t.Errorf("valueMaps = %+v, want %+v", p.ValueMaps, want)
-	}
-	for _, m := range p.ValueMaps {
-		if m.Value == "NaN" {
-			t.Errorf("valueMaps still map NaN: %+v", p.ValueMaps)
-		}
-	}
-	if p.Targets[0].Expr != "ovnk:network_programming:p99_1h >= 0" {
-		t.Errorf("p99 expr = %q, want the 1h recording rule with NaN dropped", p.Targets[0].Expr)
-	}
-	if want := "p99 over the last hour; 'idle' = no network-programming events in the hour"; p.Description != want {
-		t.Errorf("p99 description = %q, want %q", p.Description, want)
-	}
-	if got := consoleColor(p.Options.FieldOptions.Thresholds, 0); got != colorOK {
-		t.Errorf("null (read as 0) colors %q, want %q", got, colorOK)
-	}
-}
-
 func TestNetworkProgrammingPanels(t *testing.T) {
-	d := Build()
+	d := Build(Options{})
 	lat := panelByTitle(t, d, "Network programming p50/p99 (1h window)")
 	wantLegends := []string{"{{kind}} p50", "{{kind}} p99", "p99 OVN part"}
 	if len(lat.Targets) != len(wantLegends) {
@@ -332,7 +313,7 @@ func TestNetworkProgrammingPanels(t *testing.T) {
 		if !strings.Contains(tg.Expr, "[1h])") || strings.Contains(tg.Expr, "$interval") {
 			t.Errorf("latency target %d not on a fixed 1h window: %s", i, tg.Expr)
 		}
-		if !strings.Contains(tg.Expr, `kube_pod_info{node=~"$node"}`) {
+		if !strings.Contains(tg.Expr, `ovnk:ovn_pod_node:info{node=~"$node"}`) {
 			t.Errorf("latency target %d lacks the $node join: %s", i, tg.Expr)
 		}
 	}
@@ -362,7 +343,7 @@ func TestNetworkProgrammingPanels(t *testing.T) {
 }
 
 func TestPodSetupOneHour(t *testing.T) {
-	p := panelByTitle(t, Build(), "Pod setup pipeline p99 (1h window)")
+	p := panelByTitle(t, Build(Options{}), "Pod setup pipeline p99 (1h window)")
 	if len(p.Targets) != 1 || p.Targets[0].Expr != "ovnk:pod_setup_stage:p99_1h" {
 		t.Errorf("pod setup targets = %+v", p.Targets)
 	}
@@ -373,7 +354,7 @@ func TestPodSetupOneHour(t *testing.T) {
 func TestNodeModeSeriesDeduped(t *testing.T) {
 	const d = "max without (instance, pod, endpoint, container, service) ("
 	metrics := []string{"ovnkube_controller_nb_db_objects", "ovnkube_controller_sb_db_objects", "ovnkube_controller_nb_db_updates_total"}
-	for _, r := range Build().Rows {
+	for _, r := range Build(Options{}).Rows {
 		for _, p := range r.Panels {
 			for _, tg := range p.Targets {
 				for _, m := range metrics {
@@ -389,7 +370,7 @@ func TestNodeModeSeriesDeduped(t *testing.T) {
 }
 
 func TestScaleRowLayout(t *testing.T) {
-	d := Build()
+	d := Build(Options{})
 	objs := panelByTitle(t, d, "Kubernetes network objects")
 	for _, tg := range objs.Targets {
 		if strings.Contains(tg.Expr, "multi_network_policy_network_targets") {
@@ -401,22 +382,25 @@ func TestScaleRowLayout(t *testing.T) {
 		!strings.Contains(mnp.Targets[0].Expr, "ovnkube_clustermanager_multi_network_policy_network_targets") {
 		t.Errorf("MNP targets panel = %+v", mnp)
 	}
-	for _, title := range []string{"Kubernetes network objects", "NB objects per node by table"} {
-		if p := panelByTitle(t, d, title); p.Span != 4 {
-			t.Errorf("%q span = %d, want 4", title, p.Span)
+	for title, span := range map[string]int{"Kubernetes network objects": 4, "Top networks by ACL / PortGroup": 6, "NB objects by node": 6} {
+		if p := panelByTitle(t, d, title); p.Span != span {
+			t.Errorf("%q span = %d, want %d", title, p.Span, span)
 		}
+	}
+	if p := panelByTitle(t, d, "NB objects by node"); p.Type != "table" || !strings.HasPrefix(p.Targets[0].Expr, "topk(10, ") {
+		t.Errorf("NB objects by node = type %q expr %q, want a topk table", p.Type, p.Targets[0].Expr)
 	}
 }
 
 func TestExporterSelfCostSplit(t *testing.T) {
-	d := Build()
+	d := Build(Options{})
 	for title, unit := range map[string]string{"Exporter CPU": "short", "Exporter memory (working set)": "bytes"} {
 		p := panelByTitle(t, d, title)
 		if p.Type != "graph" || p.Span != 3 || p.YAxes[0].Format != unit || len(p.Targets) != 1 {
 			t.Errorf("%q = type %q span %d unit %q targets %d", title, p.Type, p.Span, p.YAxes[0].Format, len(p.Targets))
 			continue
 		}
-		if !strings.HasPrefix(p.Targets[0].Expr, "sum by (node, pod) (") || p.Targets[0].LegendFormat != "{{node}} {{pod}}" {
+		if !strings.HasPrefix(p.Targets[0].Expr, "topk(10, sum by (node, pod) (") || p.Targets[0].LegendFormat != "{{node}} {{pod}}" {
 			t.Errorf("%q target = %+v", title, p.Targets[0])
 		}
 	}
@@ -426,7 +410,7 @@ func TestExporterSelfCostSplit(t *testing.T) {
 }
 
 func TestGraphYAxisMin(t *testing.T) {
-	for _, r := range Build().Rows {
+	for _, r := range Build(Options{}).Rows {
 		for _, p := range r.Panels {
 			if p.Type != "graph" {
 				continue
@@ -444,11 +428,92 @@ func TestGraphYAxisMin(t *testing.T) {
 }
 
 func TestPodSetupUnstacked(t *testing.T) {
-	p := panelByTitle(t, Build(), "Pod setup pipeline p99 (1h window)")
+	p := panelByTitle(t, Build(Options{}), "Pod setup pipeline p99 (1h window)")
 	if p.Stack {
 		t.Error("per-stage p99s are not additive; panel must not stack")
 	}
 	if !strings.Contains(p.Description, "not additive") {
 		t.Errorf("description = %q", p.Description)
+	}
+}
+
+func TestRefreshTwoMinutes(t *testing.T) {
+	if r := Build(Options{}).Refresh; r != "2m" {
+		t.Errorf("refresh = %q, want 2m", r)
+	}
+}
+
+// The node join goes through the OVN-pod recording rule; raw kube_pod_info
+// matches every pod in the cluster.
+func TestNoKubePodInfoInPanels(t *testing.T) {
+	for _, r := range Build(Options{}).Rows {
+		for _, p := range r.Panels {
+			for _, tg := range p.Targets {
+				if strings.Contains(tg.Expr, "kube_pod_info") {
+					t.Errorf("panel %q queries kube_pod_info: %s", p.Title, tg.Expr)
+				}
+			}
+		}
+	}
+}
+
+func TestPerNodeGraphsUseTopk(t *testing.T) {
+	for _, r := range Build(Options{}).Rows {
+		for _, p := range r.Panels {
+			if p.Type != "graph" {
+				continue
+			}
+			for _, tg := range p.Targets {
+				if strings.Contains(tg.LegendFormat, "{{node}}") && !strings.HasPrefix(tg.Expr, "topk(10, ") {
+					t.Errorf("per-node graph %q target not topk(10): %s", p.Title, tg.Expr)
+				}
+			}
+		}
+	}
+}
+
+func TestACLLogLink(t *testing.T) {
+	if l := Build(Options{}).Links; len(l) != 1 {
+		t.Errorf("default links = %+v, want only the Networking / Infrastructure link", l)
+	}
+	l := Build(Options{ACLLogURL: "https://example.invalid/acl"}).Links
+	if len(l) != 2 {
+		t.Fatalf("links = %+v, want 2", l)
+	}
+	if !l[1].TargetBlank || l[1].URL != "https://example.invalid/acl" || l[1].Title != "ACL allow/deny" {
+		t.Errorf("ACL log link = %+v", l[1])
+	}
+	if l := Build(Options{ACLLogURL: "https://example.invalid/acl", ACLLogTitle: "Drops"}).Links; l[1].Title != "Drops" {
+		t.Errorf("ACL log link title = %q, want Drops", l[1].Title)
+	}
+}
+
+func TestResourceLatencyOneHour(t *testing.T) {
+	p := panelByTitle(t, Build(Options{}), "Resource add/update/delete p99 (1h window)")
+	if len(p.Targets) != 3 {
+		t.Fatalf("resource latency targets = %+v", p.Targets)
+	}
+	for i, tg := range p.Targets {
+		if !strings.Contains(tg.Expr, "[1h])") || strings.Contains(tg.Expr, "$interval") {
+			t.Errorf("resource latency target %d not on a fixed 1h window: %s", i, tg.Expr)
+		}
+	}
+}
+
+func TestDriftTable(t *testing.T) {
+	p := panelByTitle(t, Build(Options{}), "Nodes with drift")
+	if p.Type != "table" || p.Span != 6 || len(p.Targets) != 3 {
+		t.Fatalf("drift table = type %q span %d targets %d", p.Type, p.Span, len(p.Targets))
+	}
+	withPorts := "max by (node) (max without (instance, pod, endpoint, container, service) (ovnkube_controller_port_group_with_ports))"
+	want := []string{
+		"ovnk:pg_drift:missing_by_node > 0",
+		withPorts + " and on (node) (ovnk:pg_drift:missing_by_node > 0)",
+		"(ovnk:pg_drift:missing_by_node > 0) / clamp_min(" + withPorts + ", 1)",
+	}
+	for i, tg := range p.Targets {
+		if tg.Expr != want[i] {
+			t.Errorf("drift target %d = %s\nwant %s", i, tg.Expr, want[i])
+		}
 	}
 }

@@ -117,8 +117,10 @@ rules-gen:
 	} > deploy/prometheusrule.yaml
 
 # The dashboard ConfigMap lives in openshift-config-managed, outside the kustomize tree.
+# ACL_LOG_URL (optional) adds a dashboard link to an external ACL allow/deny view.
+ACL_LOG_URL ?=
 dashboard:
-	go run ./hack/dashgen -out dashboards/ -configmap deploy/dashboard-configmap.yaml
+	go run ./hack/dashgen -out dashboards/ -configmap deploy/dashboard-configmap.yaml -acl-log-url "$(ACL_LOG_URL)"
 
 dashboard-apply:
 	oc apply -f deploy/dashboard-configmap.yaml

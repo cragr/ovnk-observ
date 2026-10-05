@@ -2,7 +2,7 @@
 // dashboard JSON and the ConfigMap that installs it into
 // openshift-config-managed.
 //
-//	go run ./hack/dashgen -out dashboards/ -configmap deploy/dashboard-configmap.yaml
+//	go run ./hack/dashgen -out dashboards/ -configmap deploy/dashboard-configmap.yaml [-acl-log-url URL [-acl-log-title TITLE]]
 package main
 
 import (
@@ -54,9 +54,11 @@ func ConfigMapYAML(d Dashboard) ([]byte, error) {
 func main() {
 	out := flag.String("out", "dashboards/", "directory for the dashboard JSON")
 	cm := flag.String("configmap", "deploy/dashboard-configmap.yaml", "path of the generated ConfigMap")
+	aclURL := flag.String("acl-log-url", "", "optional URL of an external ACL allow/deny (or NetObserv drop) view, added as a dashboard link")
+	aclTitle := flag.String("acl-log-title", DefaultACLLogTitle, "title of the -acl-log-url link")
 	flag.Parse()
 
-	d := Build()
+	d := Build(Options{ACLLogURL: *aclURL, ACLLogTitle: *aclTitle})
 	j, err := DashboardJSON(d)
 	if err == nil {
 		err = os.WriteFile(filepath.Join(*out, cmDataKey), j, 0o644)
