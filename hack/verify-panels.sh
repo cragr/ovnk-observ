@@ -5,12 +5,16 @@
 # against thanos-querier ($node/$network -> .*, $interval -> 5m) and prints
 # one line per panel:
 #
-#   OK|EMPTY|ERROR  <row> / <panel title>
+#   OK|EMPTY|ERROR  <ms>ms  <row> / <panel title>
+#
+# <ms> is the total wall time of all of the panel's queries (plus the idle
+# re-check, if any), taken from curl's time_total and rounded to integer ms.
 #
 # followed by an indented line for every target that errored or returned no
 # series. A panel is EMPTY when all its targets return no series; a series
 # whose value is NaN (e.g. an idle histogram_quantile) counts as data.
-# Exits 1 on any ERROR, or on an EMPTY panel outside the "Exporter self-cost" row.
+# Exits 1 on any ERROR, or on an EMPTY panel outside the ALLOW_EMPTY_ROWS rows
+# ("Exporter self-cost").
 #
 # Idle-allowed panels (see idle_rule) filter out NaN on purpose, so they are
 # legitimately empty when nothing happened. For those, an empty panel is
@@ -20,7 +24,16 @@
 set -euo pipefail
 
 DASH="${1:-$(dirname "$0")/../dashboards/ovn-scale-troubleshooting.json}"
-ALLOW_EMPTY_ROW="Exporter self-cost"
+ALLOW_EMPTY_ROWS=("Exporter self-cost")
+
+# row_allowed succeeds when $1 is listed in ALLOW_EMPTY_ROWS.
+row_allowed() {
+	local r
+	for r in "${ALLOW_EMPTY_ROWS[@]}"; do
+		[[ "$r" == "$1" ]] && return 0
+	done
+	return 1
+}
 
 command -v jq >/dev/null || { echo "jq is required" >&2; exit 2; }
 thanos_host=$(oc get route thanos-querier -n openshift-monitoring -o jsonpath='{.spec.host}')
@@ -29,13 +42,32 @@ token=$(oc whoami -t)
 # idle_rule prints the recording rule behind an idle-allowed panel title.
 idle_rule() {
 	case "$1" in
-	"Network programming p99") echo "ovnk:network_programming:p99_1h" ;;
+	"Nodes with drift") echo "ovnk:pg_drift:missing_by_node" ;;
+	"Full-recompute events") echo "ovnk:northd_full_recompute:increase_5m" ;;
+	"Object events/min by resource/op" | "Object events/min by manager" | "MNP rules & peers")
+		echo 'ovnk_observ_informer_synced{resource="mnp"}' ;;
 	esac
 }
 
+# split_timed splits curl output ("<body>\n<seconds>") into the globals QBODY
+# and QMS (integer milliseconds; 0 if the time is missing or malformed).
+split_timed() {
+	local raw=$1 secs=0
+	if [[ "$raw" == *$'\n'* ]]; then
+		QBODY=${raw%$'\n'*}
+		secs=${raw##*$'\n'}
+	else
+		QBODY=$raw
+	fi
+	QMS=$(awk -v s="$secs" 'BEGIN { if (s !~ /^[0-9.]+$/) s = 0; printf "%d", s * 1000 + 0.5 }')
+}
+
+# query runs one instant query; sets QBODY and QMS (see split_timed).
 query() {
-	curl -sk -H "Authorization: Bearer ${token}" "https://${thanos_host}/api/v1/query" \
-		--data-urlencode "query=$1"
+	local raw
+	raw=$(curl -sk -w '\n%{time_total}' -H "Authorization: Bearer ${token}" \
+		"https://${thanos_host}/api/v1/query" --data-urlencode "query=$1" || true)
+	split_timed "$raw"
 }
 
 ok=0 idle=0 empty=0 error=0 rc=0
@@ -43,13 +75,14 @@ while IFS= read -r panel; do
 	row=$(jq -r '.row' <<<"$panel")
 	title=$(jq -r '.title' <<<"$panel")
 	n=$(jq '.exprs | length' <<<"$panel")
-	notes=() got=0 bad=0
+	notes=() got=0 bad=0 total_ms=0
 	for ((i = 0; i < n; i++)); do
 		expr=$(jq -r --argjson i "$i" '.exprs[$i]' <<<"$panel")
 		expr=${expr//\$node/.*}
 		expr=${expr//\$network/.*}
 		expr=${expr//\$interval/5m}
-		resp=$(query "$expr" || true)
+		query "$expr"
+		resp=$QBODY total_ms=$((total_ms + QMS))
 		status=$(jq -r '.status // "error"' <<<"$resp" 2>/dev/null || echo error)
 		if [[ "$status" != "success" ]]; then
 			bad=1
@@ -71,7 +104,8 @@ while IFS= read -r panel; do
 		verdict=EMPTY
 		rule=$(idle_rule "$title")
 		if [[ -n "$rule" ]]; then
-			resp=$(query "$rule" || true)
+			query "$rule"
+			resp=$QBODY total_ms=$((total_ms + QMS))
 			if [[ "$(jq -r '.status // "error"' <<<"$resp" 2>/dev/null || echo error)" == "success" ]] &&
 				(($(jq '.data.result | length' <<<"$resp") > 0)); then
 				verdict="OK(idle)"
@@ -84,10 +118,10 @@ while IFS= read -r panel; do
 			idle=$((idle + 1))
 		else
 			empty=$((empty + 1))
-			[[ "$row" == "$ALLOW_EMPTY_ROW" ]] || rc=1
+			row_allowed "$row" || rc=1
 		fi
 	fi
-	printf '%-8s  %s / %s\n' "$verdict" "$row" "$title"
+	printf '%-8s %6dms  %s / %s\n' "$verdict" "$total_ms" "$row" "$title"
 	for line in ${notes[@]+"${notes[@]}"}; do printf '%s\n' "$line"; done
 done < <(jq -c '.rows[] | .title as $r | .panels[] | {row: $r, title, exprs: [.targets[].expr]}' "$DASH")
 
