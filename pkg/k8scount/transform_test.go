@@ -2,6 +2,7 @@ package k8scount
 
 import (
 	"reflect"
+	"strings"
 	"testing"
 	"time"
 
@@ -59,7 +60,10 @@ func TestTransformsKeepOnlyCollectorFields(t *testing.T) {
 	}{
 		{"mnp", transformMNP,
 			fat(mnpGVK, map[string]interface{}{"podSelector": map[string]interface{}{}, "ingress": []interface{}{"big"}}),
-			minimal(mnpGVK, map[string]interface{}{"annotations": map[string]interface{}{policyForAnnotation: "default/a,default/b"}}, nil)},
+			minimal(mnpGVK, map[string]interface{}{"annotations": map[string]interface{}{
+				policyForAnnotation:    "default/a,default/b",
+				ingressRulesAnnotation: "1", ingressPeersAnnotation: "0",
+				egressRulesAnnotation: "0", egressPeersAnnotation: "0"}}, nil)},
 		{"nad", transformNAD,
 			fat(nadGVK, map[string]interface{}{"config": `{"cniVersion":"0.4.0"}`}),
 			minimal(nadGVK, map[string]interface{}{"ownerReferences": []interface{}{map[string]interface{}{
@@ -79,7 +83,9 @@ func TestTransformsKeepOnlyCollectorFields(t *testing.T) {
 		{"mnp without annotation", transformMNP,
 			obj(mnpGVK, "ns1", "o1", map[string]interface{}{"spec": map[string]interface{}{"x": "y"}}),
 			&unstructured.Unstructured{Object: map[string]interface{}{"apiVersion": mnpGVK.GroupVersion().String(), "kind": mnpGVK.Kind,
-				"metadata": map[string]interface{}{"name": "o1", "namespace": "ns1"}}}},
+				"metadata": map[string]interface{}{"name": "o1", "namespace": "ns1", "annotations": map[string]interface{}{
+					ingressRulesAnnotation: "0", ingressPeersAnnotation: "0",
+					egressRulesAnnotation: "0", egressPeersAnnotation: "0"}}}}},
 		{"udn without spec", transformUDN,
 			obj(udnGVK, "ns1", "o1", nil),
 			&unstructured.Unstructured{Object: map[string]interface{}{"apiVersion": udnGVK.GroupVersion().String(), "kind": udnGVK.Kind,
@@ -156,8 +162,14 @@ func TestCollectorCachesTransformedObjects(t *testing.T) {
 			if _, has := u.Object["status"]; has {
 				t.Fatalf("mnp status cached: %#v", u.Object)
 			}
-			if a := u.GetAnnotations(); len(a) != 1 || a[policyForAnnotation] == "" {
+			a := u.GetAnnotations()
+			if a[policyForAnnotation] == "" {
 				t.Fatalf("mnp annotations: %v", a)
+			}
+			for k := range a {
+				if k != policyForAnnotation && !strings.HasPrefix(k, internalPrefix) {
+					t.Fatalf("mnp unexpected annotation %q: %v", k, a)
+				}
 			}
 			if len(u.GetLabels()) != 0 {
 				t.Fatalf("mnp labels cached: %v", u.GetLabels())
@@ -172,5 +184,50 @@ func TestCollectorCachesTransformedObjects(t *testing.T) {
 			t.Fatal("informers did not sync")
 		}
 		time.Sleep(10 * time.Millisecond)
+	}
+}
+
+func TestTransformMNPKeepsCounts(t *testing.T) {
+	spec := map[string]interface{}{
+		"ingress": []interface{}{
+			map[string]interface{}{"from": []interface{}{"a", "b", "c"}},
+			map[string]interface{}{},
+		},
+		"egress": []interface{}{map[string]interface{}{"to": []interface{}{int64(1), int64(2), int64(3), int64(4)}}},
+	}
+	got, err := transformMNP(fat(mnpGVK, spec))
+	if err != nil {
+		t.Fatal(err)
+	}
+	u := got.(*unstructured.Unstructured)
+	want := map[string]string{ingressRulesAnnotation: "2", egressRulesAnnotation: "1", ingressPeersAnnotation: "3", egressPeersAnnotation: "4"}
+	for k, v := range want {
+		if u.GetAnnotations()[k] != v {
+			t.Fatalf("%s = %q, want %q", k, u.GetAnnotations()[k], v)
+		}
+	}
+	if _, has := u.Object["spec"]; has {
+		t.Fatal("spec cached")
+	}
+	if len(u.GetManagedFields()) != 0 {
+		t.Fatal("managedFields cached")
+	}
+	// Idempotent: counts survive a second transform.
+	again, _ := transformMNP(got)
+	if !reflect.DeepEqual(again, got) {
+		t.Fatalf("not idempotent: %#v", again)
+	}
+}
+
+func TestTransformMNPMalformedSpecDoesNotPanic(t *testing.T) {
+	for _, spec := range []interface{}{
+		"str", []interface{}{},
+		map[string]interface{}{"ingress": "x", "egress": 5},
+		map[string]interface{}{"ingress": []interface{}{"s", nil, map[string]interface{}{"from": "bad"}}},
+	} {
+		u := obj(mnpGVK, "ns1", "o1", map[string]interface{}{"spec": spec})
+		if _, err := transformMNP(u); err != nil {
+			t.Fatal(err)
+		}
 	}
 }

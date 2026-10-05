@@ -1,6 +1,8 @@
 package k8scount
 
 import (
+	"strconv"
+
 	networkingv1 "k8s.io/api/networking/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
@@ -23,15 +25,64 @@ func skeleton(u *unstructured.Unstructured) (*unstructured.Unstructured, map[str
 	}}, md
 }
 
-// transformMNP keeps metadata plus the policy-for annotation.
+// Private annotations the transforms attach to cached objects. They carry
+// values computed from fields the transform strips; they never exist on the
+// API server.
+const (
+	internalPrefix = "ovnk-observ.internal/"
+
+	ingressRulesAnnotation = internalPrefix + "ingress-rules"
+	egressRulesAnnotation  = internalPrefix + "egress-rules"
+	ingressPeersAnnotation = internalPrefix + "ingress-peers"
+	egressPeersAnnotation  = internalPrefix + "egress-peers"
+)
+
+// ruleCounts returns the number of rules in spec[ruleKey] and the total
+// number of entries in each rule's peerKey list. Malformed rules count as
+// rules with no peers; nothing here panics on unexpected shapes.
+func ruleCounts(u *unstructured.Unstructured, ruleKey, peerKey string) (rules, peers int) {
+	list, _, _ := unstructured.NestedSlice(u.Object, "spec", ruleKey)
+	for _, r := range list {
+		rules++
+		if rm, ok := r.(map[string]interface{}); ok {
+			if ps, ok := rm[peerKey].([]interface{}); ok {
+				peers += len(ps)
+			}
+		}
+	}
+	return rules, peers
+}
+
+// transformMNP keeps metadata, the policy-for annotation and the rule and
+// peer counts of spec.ingress / spec.egress.
 func transformMNP(obj interface{}) (interface{}, error) {
 	u, ok := obj.(*unstructured.Unstructured)
 	if !ok {
 		return obj, nil
 	}
 	out, md := skeleton(u)
+	ann := map[string]interface{}{}
 	if v, found := u.GetAnnotations()[policyForAnnotation]; found {
-		md["annotations"] = map[string]interface{}{policyForAnnotation: v}
+		ann[policyForAnnotation] = v
+	}
+	set := func(key string, n int) { ann[key] = strconv.Itoa(n) }
+	if _, found, _ := unstructured.NestedFieldNoCopy(u.Object, "spec"); found {
+		ir, ip := ruleCounts(u, "ingress", "from")
+		er, ep := ruleCounts(u, "egress", "to")
+		set(ingressRulesAnnotation, ir)
+		set(ingressPeersAnnotation, ip)
+		set(egressRulesAnnotation, er)
+		set(egressPeersAnnotation, ep)
+	} else {
+		// Already transformed (idempotence): keep the counts it carries.
+		for _, k := range []string{ingressRulesAnnotation, egressRulesAnnotation, ingressPeersAnnotation, egressPeersAnnotation} {
+			if v, found := u.GetAnnotations()[k]; found {
+				ann[k] = v
+			}
+		}
+	}
+	if len(ann) > 0 {
+		md["annotations"] = ann
 	}
 	return out, nil
 }

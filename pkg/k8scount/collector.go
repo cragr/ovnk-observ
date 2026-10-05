@@ -8,6 +8,7 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
+	"strconv"
 	"strings"
 
 	"github.com/prometheus/client_golang/prometheus"
@@ -38,7 +39,7 @@ type collector struct {
 	// is not served by the cluster.
 	informers map[string]cache.SharedIndexInformer
 
-	nads, mnps, mnpTargets, nps, udns, synced *prometheus.Desc
+	nads, mnps, mnpTargets, mnpRules, mnpPeers, nps, udns, synced *prometheus.Desc
 }
 
 // NewCollector starts informers and returns immediately. Dynamic resources
@@ -53,6 +54,10 @@ func NewCollector(ctx context.Context, dyn dynamic.Interface, kube kubernetes.In
 			"Number of MultiNetworkPolicies.", []string{"namespace"}, nil),
 		mnpTargets: prometheus.NewDesc("ovnkube_clustermanager_multi_network_policy_network_targets",
 			"Number of networks targeted by MultiNetworkPolicies (policy-for entries).", []string{"namespace"}, nil),
+		mnpRules: prometheus.NewDesc("ovnkube_clustermanager_multi_network_policy_rules",
+			"Number of ingress/egress rules across MultiNetworkPolicies.", []string{"namespace", "direction"}, nil),
+		mnpPeers: prometheus.NewDesc("ovnkube_clustermanager_multi_network_policy_peers",
+			"Number of from/to peers across MultiNetworkPolicy rules.", []string{"namespace", "direction"}, nil),
 		nps: prometheus.NewDesc("ovnkube_clustermanager_network_policies",
 			"Number of NetworkPolicies.", []string{"namespace"}, nil),
 		udns: prometheus.NewDesc("ovnkube_clustermanager_user_defined_networks",
@@ -114,7 +119,7 @@ func NewCollector(ctx context.Context, dyn dynamic.Interface, kube kubernetes.In
 }
 
 func (c *collector) Describe(ch chan<- *prometheus.Desc) {
-	for _, d := range []*prometheus.Desc{c.nads, c.mnps, c.mnpTargets, c.nps, c.udns, c.synced} {
+	for _, d := range []*prometheus.Desc{c.nads, c.mnps, c.mnpTargets, c.mnpRules, c.mnpPeers, c.nps, c.udns, c.synced} {
 		ch <- d
 	}
 }
@@ -127,6 +132,15 @@ func (c *collector) list(name string) ([]interface{}, bool) {
 		return nil, false
 	}
 	return inf.GetStore().List(), true
+}
+
+// annotationCount parses a decimal count annotation; missing or invalid is 0.
+func annotationCount(v string) float64 {
+	n, err := strconv.Atoi(v)
+	if err != nil || n < 0 {
+		return 0
+	}
+	return float64(n)
 }
 
 func (c *collector) Collect(ch chan<- prometheus.Metric) {
@@ -153,16 +167,32 @@ func (c *collector) Collect(ch chan<- prometheus.Metric) {
 
 	if objs, ok := c.list("mnp"); ok {
 		pols, targets := map[string]float64{}, map[string]float64{}
+		type dkey struct{ ns, dir string }
+		rules, peers := map[dkey]float64{}, map[dkey]float64{}
 		for _, o := range objs {
 			if u, ok := o.(*unstructured.Unstructured); ok {
 				ns := u.GetNamespace()
 				pols[ns]++
 				targets[ns] += float64(countPolicyTargets(u.GetAnnotations()[policyForAnnotation]))
+				ann := u.GetAnnotations()
+				for _, d := range []struct{ dir, rk, pk string }{
+					{"ingress", ingressRulesAnnotation, ingressPeersAnnotation},
+					{"egress", egressRulesAnnotation, egressPeersAnnotation},
+				} {
+					k := dkey{ns, d.dir}
+					rules[k] += annotationCount(ann[d.rk])
+					peers[k] += annotationCount(ann[d.pk])
+				}
 			}
 		}
 		for ns, n := range pols {
 			ch <- prometheus.MustNewConstMetric(c.mnps, prometheus.GaugeValue, n, ns)
 			ch <- prometheus.MustNewConstMetric(c.mnpTargets, prometheus.GaugeValue, targets[ns], ns)
+			for _, dir := range []string{"ingress", "egress"} {
+				k := dkey{ns, dir}
+				ch <- prometheus.MustNewConstMetric(c.mnpRules, prometheus.GaugeValue, rules[k], ns, dir)
+				ch <- prometheus.MustNewConstMetric(c.mnpPeers, prometheus.GaugeValue, peers[k], ns, dir)
+			}
 		}
 	}
 
