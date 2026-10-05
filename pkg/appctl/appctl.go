@@ -5,6 +5,7 @@ package appctl
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net"
@@ -94,6 +95,11 @@ func ShowIncEngineStats(ctx context.Context, runDir string) (string, error) {
 func wrapCtx(ctx context.Context, err error) error {
 	if cerr := ctx.Err(); cerr != nil {
 		return fmt.Errorf("%w: %v", cerr, err)
+	}
+	// The conn deadline can fire a moment before ctx.Err() is set.
+	var ne net.Error
+	if errors.As(err, &ne) && ne.Timeout() {
+		return fmt.Errorf("%w: %v", context.DeadlineExceeded, err)
 	}
 	return err
 }
