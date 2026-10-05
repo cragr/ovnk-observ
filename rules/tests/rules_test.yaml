@@ -314,3 +314,123 @@ tests:
         exp_samples:
           - labels: '{stage="first_seen_lsp"}'
             value: 0.99
+
+  # Port-group SB drift: two node-mode pods overlap during a rollout; dedupe keeps one series.
+  - interval: 1m
+    input_series:
+      - series: 'ovnkube_controller_port_group_sb_missing{node="A",pod="ovnkube-node-old",instance="1.1.1.1:9410"}'
+        values: '3x30'
+      - series: 'ovnkube_controller_port_group_sb_missing{node="A",pod="ovnkube-node-new",instance="1.1.1.2:9410"}'
+        values: '3x30'
+      - series: 'ovnkube_controller_port_group_sb_missing{node="B",pod="ovnkube-node-b",instance="1.1.1.3:9410"}'
+        values: '0x30'
+    alert_rule_test:
+      - eval_time: 9m
+        alertname: OVNKPortGroupSBDrift
+        exp_alerts: []
+      - eval_time: 11m
+        alertname: OVNKPortGroupSBDrift
+        exp_alerts:
+          - exp_labels:
+              severity: warning
+              node: A
+            exp_annotations:
+              summary: "3 Port_Groups on A are missing from the SB DB"
+    promql_expr_test:
+      - expr: ovnk:pg_drift:missing_by_node
+        eval_time: 5m
+        exp_samples:
+          - labels: 'ovnk:pg_drift:missing_by_node{node="A"}'
+            value: 3
+          - labels: 'ovnk:pg_drift:missing_by_node{node="B"}'
+            value: 0
+      - expr: ovnk:pg_drift:nodes
+        eval_time: 5m
+        exp_samples:
+          - labels: 'ovnk:pg_drift:nodes'
+            value: 1
+
+  # No drift anywhere: node count is 0 and the alert stays quiet.
+  - interval: 1m
+    input_series:
+      - series: 'ovnkube_controller_port_group_sb_missing{node="A",pod="ovnkube-node-a"}'
+        values: '0x30'
+      - series: 'ovnkube_controller_port_group_sb_missing{node="B",pod="ovnkube-node-b"}'
+        values: '0x30'
+    alert_rule_test:
+      - eval_time: 20m
+        alertname: OVNKPortGroupSBDrift
+        exp_alerts: []
+    promql_expr_test:
+      - expr: ovnk:pg_drift:nodes
+        eval_time: 5m
+        exp_samples:
+          - labels: 'ovnk:pg_drift:nodes'
+            value: 0
+
+  # Northd recompute ratio: 60 recomputes vs 40 computes per 15m on node A.
+  - interval: 1m
+    input_series:
+      - series: 'ovn_northd_inc_engine_runs_total{node="A",pod="ovnkube-node-a",instance="1.1.1.1:9410",engine_node="lflow",type="recompute"}'
+        values: '0+4x60'
+      - series: 'ovn_northd_inc_engine_runs_total{node="A",pod="ovnkube-node-a",instance="1.1.1.1:9410",engine_node="lflow",type="compute"}'
+        values: '0+2.6666666667x60'
+    alert_rule_test:
+      - eval_time: 20m
+        alertname: OVNKNorthdRecomputeHigh
+        exp_alerts: []
+      - eval_time: 50m
+        alertname: OVNKNorthdRecomputeHigh
+        exp_alerts:
+          - exp_labels:
+              severity: warning
+              node: A
+              engine_node: lflow
+            exp_annotations:
+              summary: "northd engine node lflow on A recomputes 60% of the time over 15m"
+    promql_expr_test:
+      - expr: round(ovnk:northd_recompute:ratio_15m, 0.01)
+        eval_time: 30m
+        exp_samples:
+          - labels: '{node="A",engine_node="lflow"}'
+            value: 0.6
+      - expr: round(ovnk:northd_full_recompute:increase_5m, 0.1)
+        eval_time: 30m
+        exp_samples: []
+
+  # Cluster-manager object churn: 120 MNP updates per minute.
+  - interval: 1m
+    input_series:
+      - series: 'ovnkube_clustermanager_object_events_total{resource="mnp",op="update",manager="m"}'
+        values: '0+120x40'
+    alert_rule_test:
+      - eval_time: 10m
+        alertname: OVNKPolicyChurnHigh
+        exp_alerts: []
+      - eval_time: 30m
+        alertname: OVNKPolicyChurnHigh
+        exp_alerts:
+          - exp_labels:
+              severity: warning
+            exp_annotations:
+              summary: "MultiNetworkPolicy updates are running at 120 per minute"
+    promql_expr_test:
+      - expr: ovnk:object_events:rate_5m
+        eval_time: 10m
+        exp_samples:
+          - labels: 'ovnk:object_events:rate_5m{resource="mnp",op="update"}'
+            value: 2
+
+  # Pod-to-node join only carries OVN namespace pods.
+  - interval: 1m
+    input_series:
+      - series: 'kube_pod_info{namespace="openshift-ovn-kubernetes",pod="ovnkube-node-x",node="A"}'
+        values: '1x10'
+      - series: 'kube_pod_info{namespace="other-ns",pod="app",node="A"}'
+        values: '1x10'
+    promql_expr_test:
+      - expr: ovnk:ovn_pod_node:info
+        eval_time: 5m
+        exp_samples:
+          - labels: 'ovnk:ovn_pod_node:info{namespace="openshift-ovn-kubernetes",pod="ovnkube-node-x",node="A"}'
+            value: 1

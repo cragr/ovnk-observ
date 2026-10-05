@@ -11,6 +11,9 @@ spec:
     - name: ovnk-observ.rules
       interval: 30s
       rules:
+        - record: ovnk:ovn_pod_node:info
+          expr: |-
+            max by (namespace, pod, node) (kube_pod_info{namespace="openshift-ovn-kubernetes"})
         - record: ovnk:nb_db_objects:sum_by_node_table
           expr: |-
             sum by (node, table) (max without (instance, pod, endpoint, container, service) (ovnkube_controller_nb_db_objects))
@@ -54,23 +57,38 @@ spec:
             stage: chassis_up
         - record: ovnk:ovn_txn_failure:ratio_5m
           expr: |-
-            (sum by (namespace, pod) (rate(ovn_northd_txn_error[5m]) + rate(ovn_northd_txn_try_again[5m]) + rate(ovn_northd_txn_aborted[5m])) / clamp_min(sum by (namespace, pod) (rate(ovn_northd_txn_success[5m]) + rate(ovn_northd_txn_error[5m]) + rate(ovn_northd_txn_try_again[5m]) + rate(ovn_northd_txn_aborted[5m])), 1e-9)) * on (namespace, pod) group_left(node) kube_pod_info
+            (sum by (namespace, pod) (rate(ovn_northd_txn_error[5m]) + rate(ovn_northd_txn_try_again[5m]) + rate(ovn_northd_txn_aborted[5m])) / clamp_min(sum by (namespace, pod) (rate(ovn_northd_txn_success[5m]) + rate(ovn_northd_txn_error[5m]) + rate(ovn_northd_txn_try_again[5m]) + rate(ovn_northd_txn_aborted[5m])), 1e-9)) * on (namespace, pod) group_left(node) ovnk:ovn_pod_node:info
           labels:
             component: northd
         - record: ovnk:ovn_txn_failure:ratio_5m
           expr: |-
-            (sum by (namespace, pod) (rate(ovn_controller_txn_error[5m]) + rate(ovn_controller_txn_try_again[5m]) + rate(ovn_controller_txn_aborted[5m])) / clamp_min(sum by (namespace, pod) (rate(ovn_controller_txn_success[5m]) + rate(ovn_controller_txn_error[5m]) + rate(ovn_controller_txn_try_again[5m]) + rate(ovn_controller_txn_aborted[5m])), 1e-9)) * on (namespace, pod) group_left(node) kube_pod_info
+            (sum by (namespace, pod) (rate(ovn_controller_txn_error[5m]) + rate(ovn_controller_txn_try_again[5m]) + rate(ovn_controller_txn_aborted[5m])) / clamp_min(sum by (namespace, pod) (rate(ovn_controller_txn_success[5m]) + rate(ovn_controller_txn_error[5m]) + rate(ovn_controller_txn_try_again[5m]) + rate(ovn_controller_txn_aborted[5m])), 1e-9)) * on (namespace, pod) group_left(node) ovnk:ovn_pod_node:info
           labels:
             component: controller
         - record: ovnk:nb_sb_e2e_lag_seconds
           expr: |-
-            (ovnkube_controller_nb_e2e_timestamp - ovnkube_controller_sb_e2e_timestamp) * on (namespace, pod) group_left(node) kube_pod_info
+            (ovnkube_controller_nb_e2e_timestamp - ovnkube_controller_sb_e2e_timestamp) * on (namespace, pod) group_left(node) ovnk:ovn_pod_node:info
         - record: ovnk:e2e_probe_staleness_seconds
           expr: |-
-            (time() - ovnkube_controller_nb_e2e_timestamp) * on (namespace, pod) group_left(node) kube_pod_info
+            (time() - ovnkube_controller_nb_e2e_timestamp) * on (namespace, pod) group_left(node) ovnk:ovn_pod_node:info
         - record: ovnk:ovn_db_size_bytes:deriv_30m
           expr: |-
-            deriv(ovn_db_db_size_bytes[30m]) * on (namespace, pod) group_left(node) kube_pod_info
+            deriv(ovn_db_db_size_bytes[30m]) * on (namespace, pod) group_left(node) ovnk:ovn_pod_node:info
+        - record: ovnk:pg_drift:missing_by_node
+          expr: |-
+            max by (node) (max without (instance, pod, endpoint, container, service) (ovnkube_controller_port_group_sb_missing))
+        - record: ovnk:pg_drift:nodes
+          expr: |-
+            count(ovnk:pg_drift:missing_by_node > 0) or vector(0)
+        - record: ovnk:northd_recompute:ratio_15m
+          expr: |-
+            sum by (node, engine_node) (max without (instance, pod, endpoint, container, service) (increase(ovn_northd_inc_engine_runs_total{type="recompute"}[15m]))) / clamp_min(sum by (node, engine_node) (max without (instance, pod, endpoint, container, service) (increase(ovn_northd_inc_engine_runs_total{type=~"recompute|compute"}[15m]))), 1)
+        - record: ovnk:northd_full_recompute:increase_5m
+          expr: |-
+            sum by (node) (max without (instance, pod, endpoint, container, service) (increase(ovn_northd_inc_engine_runs_total{engine_node="northd",type="recompute"}[5m])))
+        - record: ovnk:object_events:rate_5m
+          expr: |-
+            sum by (resource, op) (rate(ovnkube_clustermanager_object_events_total[5m]))
         - alert: OVNKPortGroupAmplificationHigh
           expr: ovnk:portgroup_amplification:ratio > 10
           for: 15m
@@ -121,3 +139,24 @@ spec:
           annotations:
             summary: "Network programming p99 latency is {{ $value | printf \"%.1f\" }}s"
             description: "p99 over a 1h window, so a single slow burst keeps this alert active for up to ~1h."
+        - alert: OVNKPortGroupSBDrift
+          expr: ovnk:pg_drift:missing_by_node > 0
+          for: 10m
+          labels:
+            severity: warning
+          annotations:
+            summary: "{{ $value | printf \"%.0f\" }} Port_Groups on {{ $labels.node }} are missing from the SB DB"
+        - alert: OVNKNorthdRecomputeHigh
+          expr: ovnk:northd_recompute:ratio_15m{engine_node=~"northd|lflow"} > 0.5
+          for: 30m
+          labels:
+            severity: warning
+          annotations:
+            summary: "northd engine node {{ $labels.engine_node }} on {{ $labels.node }} recomputes {{ $value | humanizePercentage }} of the time over 15m"
+        - alert: OVNKPolicyChurnHigh
+          expr: sum(ovnk:object_events:rate_5m{resource="mnp",op="update"}) * 60 > 100
+          for: 15m
+          labels:
+            severity: warning
+          annotations:
+            summary: "MultiNetworkPolicy updates are running at {{ $value | printf \"%.0f\" }} per minute"
