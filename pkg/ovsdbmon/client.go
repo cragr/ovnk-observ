@@ -17,13 +17,43 @@ import (
 	"github.com/cragr/ovnk-observ/pkg/nbcount"
 )
 
-// TableSpec selects one table and the single column monitored on it.
-// KeyFromRow derives the counter Key from the column's external_ids map;
-// otherwise every row counts under Key{"none","default"}.
+// TableSpec selects one table and the column monitored on it, plus any Extra
+// columns requested after it. KeyFromRow derives the counter Key from the
+// column's external_ids map; otherwise every row counts under
+// Key{"none","default"}.
 type TableSpec struct {
 	Name       string
 	Column     string
 	KeyFromRow bool
+	Extra      []string
+}
+
+// RowHook receives every applied row. Upsert gets the full monitor "new" map
+// (all monitored columns), never the "old" delta. Delete is called for
+// old-only, non-initial updates. Reset is called after every disconnect.
+// Methods are called from the monitor goroutine.
+type RowHook interface {
+	Upsert(table string, uuid [16]byte, row map[string]json.RawMessage)
+	Delete(table string, uuid [16]byte)
+	Reset()
+}
+
+// WithColumns returns a copy of tables with cols monitored on table. If table
+// is present, cols are appended to its Extra; otherwise a new TableSpec with
+// Column cols[0] and Extra cols[1:] is appended. The input is not modified.
+func WithColumns(tables []TableSpec, table string, cols ...string) []TableSpec {
+	out := make([]TableSpec, len(tables), len(tables)+1)
+	copy(out, tables)
+	for i := range out {
+		if out[i].Name == table {
+			out[i].Extra = append(append([]string(nil), out[i].Extra...), cols...)
+			return out
+		}
+	}
+	if len(cols) == 0 {
+		return out
+	}
+	return append(out, TableSpec{Name: table, Column: cols[0], Extra: append([]string(nil), cols[1:]...)})
 }
 
 // Config configures Run.
@@ -31,6 +61,8 @@ type Config struct {
 	Socket, Database string
 	Tables           []TableSpec
 	Counter          *nbcount.Counter
+	// Hook, if set, sees every applied row and is Reset after each disconnect.
+	Hook RowHook
 	// OnState, if set, is called with (true, initial-sync duration) once the
 	// monitor reply has been fully applied, and with (false, 0) whenever a
 	// connection attempt fails or an established connection ends.
@@ -106,6 +138,9 @@ func Run(ctx context.Context, cfg Config) error {
 		}
 		lasted, err := runOnce(ctx, cfg, log)
 		cfg.Counter.Reset()
+		if cfg.Hook != nil {
+			cfg.Hook.Reset()
+		}
 		setState(cfg, false, 0)
 		if ctx.Err() != nil {
 			return ctx.Err()
@@ -159,7 +194,7 @@ func (c *conn) echoReply(id, params json.RawMessage) error {
 func monitorRequest(cfg Config) ([]byte, error) {
 	reqs := make(map[string]any, len(cfg.Tables))
 	for _, t := range cfg.Tables {
-		reqs[t.Name] = map[string][]string{"columns": {t.Column}}
+		reqs[t.Name] = map[string][]string{"columns": append([]string{t.Column}, t.Extra...)}
 	}
 	return json.Marshal(struct {
 		Method string `json:"method"`

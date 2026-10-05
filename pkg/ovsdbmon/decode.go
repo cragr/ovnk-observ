@@ -36,6 +36,7 @@ type session struct {
 	dec     *json.Decoder
 	tables  map[string]TableSpec
 	counter *nbcount.Counter
+	hook    RowHook
 	log     *slog.Logger
 	echo    func(id, params json.RawMessage) error
 
@@ -47,7 +48,7 @@ func newSession(dec *json.Decoder, cfg Config, log *slog.Logger, echo func(id, p
 	for _, ts := range cfg.Tables {
 		t[ts.Name] = ts
 	}
-	return &session{dec: dec, tables: t, counter: cfg.Counter, log: log, echo: echo}
+	return &session{dec: dec, tables: t, counter: cfg.Counter, hook: cfg.Hook, log: log, echo: echo}
 }
 
 // readMessage decodes and handles exactly one top-level JSON-RPC message.
@@ -218,6 +219,9 @@ func (s *session) apply(spec TableSpec, uuidStr string, ru *rowUpdate, initial b
 	switch {
 	case ru.New != nil:
 		s.counter.Upsert(spec.Name, u, rowKey(spec, ru.New))
+		if s.hook != nil {
+			s.hook.Upsert(spec.Name, u, ru.New)
+		}
 		if !initial {
 			op := "insert"
 			if ru.Old != nil {
@@ -227,6 +231,9 @@ func (s *session) apply(spec TableSpec, uuidStr string, ru *rowUpdate, initial b
 		}
 	case ru.Old != nil && !initial:
 		s.counter.Delete(spec.Name, u)
+		if s.hook != nil {
+			s.hook.Delete(spec.Name, u)
+		}
 		s.counter.RecordUpdate(spec.Name, "delete")
 	}
 }

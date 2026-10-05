@@ -18,7 +18,11 @@ import (
 	"time"
 
 	"github.com/cragr/ovnk-observ/pkg/nbcount"
+	"github.com/cragr/ovnk-observ/pkg/pgdrift"
 )
+
+// pgdrift.Side is the intended RowHook.
+var _ RowHook = (*pgdrift.Side)(nil)
 
 // Keep test output pristine: the client logs every disconnect.
 func TestMain(m *testing.M) {
@@ -625,7 +629,7 @@ func TestTableSpecs(t *testing.T) {
 		t.Fatalf("NBTables %v", NBTables)
 	}
 	for i := range nb {
-		if NBTables[i] != nb[i] {
+		if !reflect.DeepEqual(NBTables[i], nb[i]) {
 			t.Fatalf("NBTables[%d] = %+v, want %+v", i, NBTables[i], nb[i])
 		}
 	}
@@ -640,7 +644,7 @@ func TestTableSpecs(t *testing.T) {
 		t.Fatalf("SBTables %v", SBTables)
 	}
 	for i := range sb {
-		if SBTables[i] != sb[i] {
+		if !reflect.DeepEqual(SBTables[i], sb[i]) {
 			t.Fatalf("SBTables[%d] = %+v", i, SBTables[i])
 		}
 	}
@@ -720,5 +724,105 @@ func TestRunOnceUptimeCountsFromSync(t *testing.T) {
 	up := <-res
 	if up < 50*time.Millisecond || up >= time.Second {
 		t.Fatalf("synced uptime %v, want ~50ms measured from sync", up)
+	}
+}
+
+func TestMonitorRequestIncludesExtraColumns(t *testing.T) {
+	cfg := Config{Database: "OVN_Northbound", Tables: WithColumns(NBTables, "Port_Group", "name", "ports")}
+	b, err := monitorRequest(cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var req struct {
+		Params []json.RawMessage `json:"params"`
+	}
+	if err := json.Unmarshal(b, &req); err != nil || len(req.Params) != 3 {
+		t.Fatalf("bad request %s: %v", b, err)
+	}
+	var tables map[string]struct{ Columns []string }
+	if err := json.Unmarshal(req.Params[2], &tables); err != nil {
+		t.Fatal(err)
+	}
+	if got, want := tables["Port_Group"].Columns, []string{"external_ids", "name", "ports"}; !reflect.DeepEqual(got, want) {
+		t.Fatalf("Port_Group columns = %v, want %v", got, want)
+	}
+	if got := tables["ACL"].Columns; !reflect.DeepEqual(got, []string{"external_ids"}) {
+		t.Fatalf("ACL columns = %v", got)
+	}
+}
+
+func TestWithColumnsAddsMissingTable(t *testing.T) {
+	before := len(SBTables)
+	got := WithColumns(SBTables, "Port_Group", "name")
+	if len(SBTables) != before {
+		t.Fatalf("SBTables mutated: %d -> %d", before, len(SBTables))
+	}
+	if len(got) != before+1 {
+		t.Fatalf("len = %d, want %d", len(got), before+1)
+	}
+	if last := got[len(got)-1]; !reflect.DeepEqual(last, TableSpec{Name: "Port_Group", Column: "name"}) {
+		t.Fatalf("last = %+v", last)
+	}
+	// Appending to an existing table must not alias the input's Extra.
+	base := []TableSpec{{Name: "T", Column: "a", Extra: make([]string, 0, 4)}}
+	x := WithColumns(base, "T", "b")
+	y := WithColumns(base, "T", "c")
+	if x[0].Extra[0] != "b" || y[0].Extra[0] != "c" || len(base[0].Extra) != 0 {
+		t.Fatalf("aliasing: x=%v y=%v base=%v", x[0].Extra, y[0].Extra, base[0].Extra)
+	}
+}
+
+type hookEv struct {
+	kind  string
+	table string
+	uuid  [16]byte
+	row   map[string]json.RawMessage
+}
+
+type recHook struct{ ev chan hookEv }
+
+func (h *recHook) Upsert(tbl string, u [16]byte, row map[string]json.RawMessage) {
+	h.ev <- hookEv{"upsert", tbl, u, row}
+}
+func (h *recHook) Delete(tbl string, u [16]byte) { h.ev <- hookEv{kind: "delete", table: tbl, uuid: u} }
+func (h *recHook) Reset()                        { h.ev <- hookEv{kind: "reset"} }
+
+func TestHookSeesRowsAndResets(t *testing.T) {
+	setBackoff(t, 10*time.Millisecond)
+	srv := newFakeServer(t)
+	hook := &recHook{ev: make(chan hookEv, 16)}
+	tables := WithColumns(nil, "Port_Group", "external_ids", "name", "ports")
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan error, 1)
+	go func() {
+		done <- Run(ctx, Config{Socket: srv.path(), Database: "OVN_Northbound", Tables: tables,
+			Counter: nbcount.NewCounter(), Hook: hook})
+	}()
+	t.Cleanup(func() { cancel(); <-done })
+	fc := srv.accept(t, 3*time.Second)
+	fc.next(t) // monitor request
+	fc.write(t, `{"id":1,"error":null,"result":{"Port_Group":{"`+u1+`":{"new":{"external_ids":["map",[]],"name":"pg1","ports":["set",[]]}}}}}`)
+	fc.write(t, `{"method":"update","params":["ovnk-observ",{"Port_Group":{"`+u1+`":{"old":{"name":"pg1"}}}}],"id":null}`)
+	fc.c.Close()
+
+	next := func() hookEv {
+		select {
+		case e := <-hook.ev:
+			return e
+		case <-time.After(5 * time.Second):
+			t.Fatal("timed out waiting for hook event")
+			return hookEv{}
+		}
+	}
+	wantU, _ := nbcount.ParseUUID(u1)
+	e := next()
+	if e.kind != "upsert" || e.table != "Port_Group" || e.uuid != wantU || string(e.row["name"]) != `"pg1"` {
+		t.Fatalf("first event = %+v", e)
+	}
+	if e = next(); e.kind != "delete" || e.table != "Port_Group" || e.uuid != wantU {
+		t.Fatalf("second event = %+v", e)
+	}
+	if e = next(); e.kind != "reset" {
+		t.Fatalf("third event = %+v", e)
 	}
 }
