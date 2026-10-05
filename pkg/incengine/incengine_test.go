@@ -35,9 +35,6 @@ func TestParseIncidentFixture(t *testing.T) {
 
 func TestParseLabFixture(t *testing.T) {
 	b, err := os.ReadFile("testdata/show-stats-lab.txt")
-	if errors.Is(err, os.ErrNotExist) {
-		t.Skip("lab fixture not captured yet (pending cluster login; see plan Task 1)")
-	}
 	if err != nil {
 		t.Fatal(err)
 	}
