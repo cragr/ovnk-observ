@@ -342,7 +342,7 @@ func Build(o Options) Dashboard {
 			describe(table("Nodes with drift", 6, []string{"node"},
 				col(`ovnk:pg_drift:missing_by_node > 0`, "Missing"),
 				col(withPortsByNode+` and on (node) (ovnk:pg_drift:missing_by_node > 0)`, "With ports"),
-				col(`(ovnk:pg_drift:missing_by_node > 0) / clamp_min(`+withPortsByNode+`, 1)`, "Ratio")),
+				col(`(ovnk:pg_drift:missing_by_node > 0) / on (node) clamp_min(`+withPortsByNode+`, 1)`, "Ratio")),
 				"NB Port_Groups with ports that are missing from the node's SB; these nodes need a recompute."),
 			graph("PG drift over time", "short", 6,
 				t(top(sel("ovnk:pg_drift:missing_by_node", nodeSel)), "{{node}}")),

@@ -438,7 +438,7 @@ data:
                   "format": "table"
                 },
                 {
-                  "expr": "(ovnk:pg_drift:missing_by_node > 0) / clamp_min(max by (node) (max without (instance, pod, endpoint, container, service) (ovnkube_controller_port_group_with_ports)), 1)",
+                  "expr": "(ovnk:pg_drift:missing_by_node > 0) / on (node) clamp_min(max by (node) (max without (instance, pod, endpoint, container, service) (ovnkube_controller_port_group_with_ports)), 1)",
                   "legendFormat": "",
                   "refId": "C",
                   "instant": true,

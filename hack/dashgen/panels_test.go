@@ -509,7 +509,7 @@ func TestDriftTable(t *testing.T) {
 	want := []string{
 		"ovnk:pg_drift:missing_by_node > 0",
 		withPorts + " and on (node) (ovnk:pg_drift:missing_by_node > 0)",
-		"(ovnk:pg_drift:missing_by_node > 0) / clamp_min(" + withPorts + ", 1)",
+		"(ovnk:pg_drift:missing_by_node > 0) / on (node) clamp_min(" + withPorts + ", 1)",
 	}
 	for i, tg := range p.Targets {
 		if tg.Expr != want[i] {
