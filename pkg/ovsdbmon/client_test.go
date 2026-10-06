@@ -313,6 +313,37 @@ func TestMonitorAppliesUpdates(t *testing.T) {
 	}
 }
 
+// With Extra columns monitored (--pg-drift adds Port_Group ports), a modify
+// whose "old" lists only Extra columns must not count as an NB update, so the
+// base nb_db_updates_total semantics stay keyed on the primary column.
+func TestMonitorModifyOfOnlyExtraColumnsRecordsNoUpdate(t *testing.T) {
+	srv := newFakeServer(t)
+	pg := []TableSpec{{Name: "Port_Group", Column: "external_ids", KeyFromRow: true, Extra: []string{"name", "ports"}}}
+	h := startClient(t, srv, pg)
+	fc := srv.accept(t, 3*time.Second)
+	fc.next(t) // monitor request (Extra columns covered by TestMonitorRequestIncludesExtraColumns)
+	fc.write(t, `{"id":1,"error":null,"result":{"Port_Group":{"`+u1+`":{"new":{"external_ids":`+vlanIDs+`,"name":"pg1","ports":["set",[]]}}}}}`)
+	h.state(t)
+
+	// ports-only modify: no update recorded.
+	fc.write(t, `{"method":"update","params":["ovnk-observ",{"Port_Group":{"`+u1+`":{"old":{"ports":["set",[]]},"new":{"external_ids":`+vlanIDs+`,"name":"pg1","ports":["uuid","`+u2+`"]}}}}],"id":null}`)
+	fc.barrier(t, "ports")
+	if u := h.counter.Updates(); len(u) != 0 {
+		t.Fatalf("ports-only modify recorded updates: %v", u)
+	}
+
+	// external_ids modify: recorded as "modify".
+	fc.write(t, `{"method":"update","params":["ovnk-observ",{"Port_Group":{"`+u1+`":{"old":{"external_ids":`+vlanIDs+`},"new":{"external_ids":["map",[]],"name":"pg1","ports":["uuid","`+u2+`"]}}}}],"id":null}`)
+	fc.barrier(t, "ext")
+	u := h.counter.Updates()
+	if len(u) != 1 || u[[2]string{"Port_Group", "modify"}] != 1 {
+		t.Fatalf("updates %v, want Port_Group/modify=1", u)
+	}
+	if s := h.counter.Snapshot()["Port_Group"]; s[keyNone] != 1 || len(s) != 1 {
+		t.Fatalf("snapshot %v", s)
+	}
+}
+
 func TestMonitorParamsBeforeMethod(t *testing.T) {
 	// Key order in a JSON object is not guaranteed; params may precede method.
 	srv := newFakeServer(t)
@@ -796,7 +827,8 @@ func TestHookSeesRowsAndResets(t *testing.T) {
 	done := make(chan error, 1)
 	go func() {
 		done <- Run(ctx, Config{Socket: srv.path(), Database: "OVN_Northbound", Tables: tables,
-			Counter: nbcount.NewCounter(), Hook: hook})
+			Counter: nbcount.NewCounter(), Hook: hook,
+			OnState: func(c bool, _ time.Duration) { hook.ev <- hookEv{kind: fmt.Sprintf("state:%v", c)} }})
 	}()
 	t.Cleanup(func() { cancel(); <-done })
 	fc := srv.accept(t, 3*time.Second)
@@ -819,10 +851,18 @@ func TestHookSeesRowsAndResets(t *testing.T) {
 	if e.kind != "upsert" || e.table != "Port_Group" || e.uuid != wantU || string(e.row["name"]) != `"pg1"` {
 		t.Fatalf("first event = %+v", e)
 	}
-	if e = next(); e.kind != "delete" || e.table != "Port_Group" || e.uuid != wantU {
+	if e = next(); e.kind != "state:true" {
 		t.Fatalf("second event = %+v", e)
 	}
-	if e = next(); e.kind != "reset" {
+	if e = next(); e.kind != "delete" || e.table != "Port_Group" || e.uuid != wantU {
 		t.Fatalf("third event = %+v", e)
+	}
+	// Disconnected must be published before the state is emptied, so a
+	// scrape that sees connected=true never reads a reset (empty) state.
+	if e = next(); e.kind != "state:false" {
+		t.Fatalf("fourth event = %+v, want state:false before reset", e)
+	}
+	if e = next(); e.kind != "reset" {
+		t.Fatalf("fifth event = %+v", e)
 	}
 }

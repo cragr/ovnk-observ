@@ -123,7 +123,8 @@ func nextBackoff(cur, start, lasted time.Duration) (wait, next time.Duration) {
 // Run connects, monitors and streams until ctx is cancelled, reconnecting with
 // exponential backoff (1s, x2, cap 5m; reset to 1s only after a connection
 // that stayed up >= 1m past its initial sync).
-// After every disconnect the counter is Reset and OnState(false, 0) is called.
+// After every disconnect OnState(false, 0) is called, then the counter (and
+// Hook) are Reset.
 // It returns ctx.Err() once ctx is done.
 func Run(ctx context.Context, cfg Config) error {
 	start := defaultBackoffStart
@@ -137,11 +138,13 @@ func Run(ctx context.Context, cfg Config) error {
 			return err
 		}
 		lasted, err := runOnce(ctx, cfg, log)
+		// Publish "disconnected" before emptying the state, so a scrape that
+		// already read connected=true never sees a reset counter or hook.
+		setState(cfg, false, 0)
 		cfg.Counter.Reset()
 		if cfg.Hook != nil {
 			cfg.Hook.Reset()
 		}
-		setState(cfg, false, 0)
 		if ctx.Err() != nil {
 			return ctx.Err()
 		}

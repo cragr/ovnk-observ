@@ -122,7 +122,8 @@ func TestNodeModePGDriftFlag(t *testing.T) {
 
 func TestRunRejectsBadChurnManagerLabel(t *testing.T) {
 	err := run(context.Background(), []string{"--mode=cluster", "--churn-manager-label=top:5"}, io.Discard)
-	if err == nil || !strings.Contains(err.Error(), "churn-manager-label") {
-		t.Fatalf("want churn-manager-label error, got %v", err)
+	if err == nil || !strings.Contains(err.Error(), `invalid --churn-manager-label "top:5"`) ||
+		strings.Contains(err.Error(), "per-network-labels") {
+		t.Fatalf("want an invalid --churn-manager-label error naming only that flag, got %v", err)
 	}
 }

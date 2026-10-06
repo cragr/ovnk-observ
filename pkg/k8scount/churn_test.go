@@ -69,7 +69,8 @@ func TestChurnSkipsUnchangedResourceVersion(t *testing.T) {
 	compareChurn(t, c, `
 ovnkube_clustermanager_object_events_total{manager="m",op="update",resource="mnp"} 1
 `)
-	// Deletes unwrap tombstones and use manager="unknown".
+	// Deletes ignore the object, so a tombstone counts the same as a plain
+	// delete, always under manager="unknown".
 	h.DeleteFunc(cache.DeletedFinalStateUnknown{Key: "ns/x", Obj: mk("3")})
 	h.DeleteFunc(mk("3"))
 	compareChurn(t, c, `

@@ -70,7 +70,8 @@ func run(ctx context.Context, args []string, stdout io.Writer) error {
 	}
 	churnMode, err := metrics.ParseNetworkLabelMode(*churnLabel)
 	if err != nil {
-		return fmt.Errorf("--churn-manager-label: %w", err)
+		// The parser's message names --per-network-labels; name this flag.
+		return fmt.Errorf("invalid --churn-manager-label %q: want \"off\" or \"topN:<n>\" with n >= 1", *churnLabel)
 	}
 	managerLabels := churnMode.TopN
 	if churnMode.Off {

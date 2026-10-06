@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"slices"
 	"unicode/utf8"
 
 	"github.com/cragr/ovnk-observ/pkg/nbcount"
@@ -222,12 +223,12 @@ func (s *session) apply(spec TableSpec, uuidStr string, ru *rowUpdate, initial b
 		if s.hook != nil {
 			s.hook.Upsert(spec.Name, u, ru.New)
 		}
-		if !initial {
-			op := "insert"
-			if ru.Old != nil {
-				op = "modify"
-			}
-			s.counter.RecordUpdate(spec.Name, op)
+		switch {
+		case initial:
+		case ru.Old == nil:
+			s.counter.RecordUpdate(spec.Name, "insert")
+		case changesBase(spec, ru.Old):
+			s.counter.RecordUpdate(spec.Name, "modify")
 		}
 	case ru.Old != nil && !initial:
 		s.counter.Delete(spec.Name, u)
@@ -236,6 +237,19 @@ func (s *session) apply(spec TableSpec, uuidStr string, ru *rowUpdate, initial b
 		}
 		s.counter.RecordUpdate(spec.Name, "delete")
 	}
+}
+
+// changesBase reports whether a modify's "old" (which in monitor v1 lists only
+// the changed columns) touches a column outside spec.Extra. Changes confined to
+// Extra columns are not counted as NB updates, so monitoring extra columns does
+// not change the base updates metric.
+func changesBase(spec TableSpec, old map[string]json.RawMessage) bool {
+	for col := range old {
+		if !slices.Contains(spec.Extra, col) {
+			return true
+		}
+	}
+	return false
 }
 
 var constKey = nbcount.Key{OwnerType: "none", Network: "default"}
