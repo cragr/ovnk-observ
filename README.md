@@ -41,7 +41,7 @@ make verify-install-manifest  # fail if install/ovnk-observ.yaml is stale or not
 make deploy-release           # apply install/ovnk-observ.yaml, as an admin would
 ```
 
-`VERSION` defaults to `v0.1.0` and `IMG` to `quay.io/cragr/ovnk-observ-exporter`. The image tag lives only in the `images:` entry of `deploy/kustomization.yaml`. To cut a release, bump `VERSION` in the Makefile and run `make install-manifest`; it runs `make set-version` to update that entry, then renders the file. `make verify-install-manifest` changes no files and fails if the rendered file is stale or if the DaemonSet and Deployment do not both use `$(IMG):$(VERSION)`.
+`VERSION` defaults to `v0.2.0` and `IMG` to `quay.io/cragr/ovnk-observ-exporter`. The image tag lives only in the `images:` entry of `deploy/kustomization.yaml`. To cut a release, bump `VERSION` in the Makefile and run `make install-manifest`; it runs `make set-version` to update that entry, then renders the file. `make verify-install-manifest` changes no files and fails if the rendered file is stale or if the DaemonSet and Deployment do not both use `$(IMG):$(VERSION)`.
 
 The install manifest is rendered with kustomize `$(KUSTOMIZE_VERSION)` (v5.8.1), which `make tools` downloads to `bin/` alongside promtool. Other kustomize versions may format the output differently and make the verify step fail.
 
