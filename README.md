@@ -25,7 +25,7 @@ make dashboard-apply          # apply the dashboard ConfigMap to openshift-confi
 make undeploy                 # remove everything, including the dashboard
 ```
 
-`make deploy` creates the BuildConfig but does not build the image. Run `make image-dev` after the first `make deploy`, and again after any `make undeploy`. The pods start once the first build lands in the ImageStream.
+`make deploy` creates the BuildConfig but does not build the image. Run `make image-dev` after every `make deploy` (re-applying resets the image to the short name) and after any `make undeploy`. It pins the pod templates to the ImageStream's digest, because image policy admission did not resolve the short name on the lab. The pods start once the first build lands in the ImageStream.
 
 After `make rules-gen` or `make dashboard`, run `make install-manifest` to refresh the install file, and `make deploy` to apply the change to a dev cluster.
 

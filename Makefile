@@ -45,12 +45,17 @@ image-dev: build
 	@ctx=$$(mktemp -d) && trap 'rm -rf "$$ctx"' EXIT && \
 		mkdir -p "$$ctx/bin" && cp Containerfile "$$ctx/" && cp bin/ovnk-observ-exporter "$$ctx/bin/" && \
 		oc start-build ovnk-observ-exporter -n ovnk-observ --from-dir="$$ctx" --follow
-	@# Admission stores the resolved digest in the pod templates, so a restart or
-	@# re-apply keeps the old build. Setting the short name again makes admission
-	@# resolve it to the new digest, which rolls the pods.
-	oc set image ds/ovnk-observ-node deploy/ovnk-observ-cluster exporter=ovnk-observ-exporter:latest -n ovnk-observ
+	@# Admission did not resolve the short name on the lab (OCP 4.21), so pods hit
+	@# ImagePullBackOff. Pin the pod templates to the ImageStream's current digest
+	@# instead. A new digest rolls the pods; the same digest is a no-op. make deploy
+	@# (re-apply) resets the image to the short name, so run image-dev after it.
+	@ref=$$(oc get is ovnk-observ-exporter -n ovnk-observ -o jsonpath='{.status.tags[?(@.tag=="latest")].items[0].dockerImageReference}') && \
+		{ [ -n "$$ref" ] || { echo "image-dev: ImageStream ovnk-observ-exporter has no latest digest; did the build succeed?" >&2; exit 1; }; } && \
+		echo "Setting exporter image to $$ref" && \
+		oc set image ds/ovnk-observ-node deploy/ovnk-observ-cluster exporter="$$ref" -n ovnk-observ
 
-# Dev: deploy/ plus the in-cluster BuildConfig (overlays/dev). Run make image-dev next.
+# Dev: deploy/ plus the in-cluster BuildConfig (overlays/dev). Run make image-dev next;
+# re-applying resets the image to the short name, so run it after every deploy.
 deploy:
 	oc apply -k overlays/dev/
 

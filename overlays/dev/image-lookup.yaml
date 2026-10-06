@@ -1,10 +1,10 @@
-# With this annotation, OpenShift image policy admission resolves the short
-# name ovnk-observ-exporter:latest to the ImageStream's current digest on every
-# create and update, and stores that digest in the pod template. Re-applying
-# leaves the spec unchanged, so it does not roll the pods (ImageStream triggers
-# did: apply reset the image to the tag, then the trigger set the digest
-# again). Because the stored template holds a digest, a restart keeps the old
-# build; make image-dev runs oc set image with the short name to re-resolve it.
+# With this annotation, OpenShift image policy admission should resolve the
+# short name ovnk-observ-exporter:latest to the ImageStream's current digest.
+# On the lab (OCP 4.21.16) it did not: pods hit ImagePullBackOff because the
+# kubelet tried docker.io. So make image-dev pins the pod templates to the
+# ImageStream's digest with oc set image. make deploy (re-apply) resets the
+# image to the short name, so run make image-dev after it. The annotation stays
+# for clusters where admission does resolve the name.
 apiVersion: apps/v1
 kind: Deployment
 metadata:
