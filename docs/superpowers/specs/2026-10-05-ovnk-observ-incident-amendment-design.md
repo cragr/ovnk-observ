@@ -1,7 +1,7 @@
 # OVN-K Observ — Incident-Driven Amendment — Design
 
 - **Date:** 2026-10-05
-- **Status:** Implemented (pending lab gate)
+- **Status:** Implemented; lab gate passed 2026-10-06 (OCP 4.21.16, OVN 25.09.3)
 - **Amends:** [2026-10-02 dashboard design](2026-10-02-ovnk-observ-dashboard-design.md), sections 4, 5, 6, 7, 8, 10, 12
 - **Source:** a production incident bridge (OVN-IC, multiple clusters, MultiNetworkPolicy at scale). No customer names, hosts, addresses, or policy names appear here.
 
@@ -152,6 +152,8 @@ Thresholds are starting points; tune them on the lab and on the next incident's 
 
 **Gate for PG drift.** Before enabling by default, measure on the lab (475k NB PGs, mostly empty) and on a synthetic cluster with large shared groups: exporter RSS must stay under the 256 Mi limit with ≥ 30% headroom, and initial sync time must not grow by more than 25%. If either fails, ship with `--pg-drift=false` by default and document it as an incident-time switch.
 
+**Lab result (2026-10-06).** Baseline with drift off: node exporter working set max 60.6 MiB; NB initial sync 16.3–22.1 s. The baseline window was about 15 minutes, not 1 hour, because the exporter had not been deployed before. Drift on for 1 hour: max working set 99.9 MiB, about 100 MiB at startup (limit 179 MiB, i.e. 70% of 256 Mi); NB initial sync max 22.95 s (≤ 1.25× baseline); 0 restarts. Gate passed, so `--pg-drift` stays on by default. Drift added about 40 MiB per node on this lab (8 nodes, 3–51 Port_Groups with ports per node). That is more than the section 8 per-entry estimate implies at this small scale, so re-measure at customer scale.
+
 **Possible follow-up.** Moving Port_Group to `monitor_cond_since` with `update2` diffs would send only port deltas. This is deferred; the minimal client speaks monitor v1 only.
 
 ## 9. Query load
@@ -163,7 +165,7 @@ Today the dashboard runs 26 `join()` expressions. Each one matches against every
 | `ovnk:ovn_pod_node:info` recording rule restricted to `openshift-ovn-kubernetes`; `join()` in `hack/dashgen` and all recording rules use it | Join side shrinks from every pod in the cluster to one or two per node |
 | Recording rules for anything used by more than one panel or by an alert (drift, recompute ratio, events) | Panels read precomputed series |
 | `topk(10, …)` on per-node graphs when `$node` is All | Fewer series rendered and transferred |
-| Collapse rows 5 and 6 by default | Fewer panels on the first screen. Verify on the lab whether the console skips queries for collapsed rows; if it does not, this is a readability change only. |
+| Collapse rows 5 and 6 by default | Fewer panels on the first screen. Lab result: the console (OCP 4.21) issues `query_range` requests only for panels that are expanded and scrolled into view. Collapsed rows and off-screen panels send no queries, so collapsing rows 5 and 6 does reduce query load. |
 | Default refresh 1m → 2m | Halves steady-state query load; the data underneath is 30 s scrapes and 1h windows |
 
 `hack/verify-panels.sh` gains a timing column so a panel that is slow against Thanos shows up in review.
@@ -178,6 +180,8 @@ Today the dashboard runs 26 `join()` expressions. Each one matches against every
    - Exporter RSS and initial sync stay within the section 8 gate.
    - `inc-engine` values match `ovn-appctl -t ovn-northd inc-engine/show-stats` on one node.
    - `verify-panels` reports zero errors and per-panel timings.
+
+   **Lab observations (2026-10-06).** The drift metric matched the NB/SB diff script, and `inc-engine` counters matched `show-stats`. A single one-sample spike of drift=1 on one node right after drift was enabled cleared on the next scrape; the 10-minute `for:` on `OVNKPortGroupSBDrift` absorbs this.
 5. **Remediation check (requires approval; changes cluster state):** on a node with drift, run `inc-engine/recompute` and confirm the drift gauge drops to 0 and the full-recompute panel shows the event.
 
 ## 11. Deferred and out of scope
