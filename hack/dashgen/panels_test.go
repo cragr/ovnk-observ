@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"bytes"
 	"encoding/json"
+	"os"
 	"reflect"
 	"strings"
 	"testing"
@@ -515,5 +516,31 @@ func TestDriftTable(t *testing.T) {
 		if tg.Expr != want[i] {
 			t.Errorf("drift target %d = %s\nwant %s", i, tg.Expr, want[i])
 		}
+	}
+}
+
+func TestACLsPerMNPRuleCountsSecondaryNetworksOnly(t *testing.T) {
+	p := panelByTitle(t, Build(Options{}), "ACLs per MNP rule")
+	if want := `ovnkube_controller_nb_db_objects{table="ACL",owner_type="NetworkPolicy",network!="default"}`; !strings.Contains(p.Targets[0].Expr, want) {
+		t.Errorf("numerator must exclude the default network (%s): %s", want, p.Targets[0].Expr)
+	}
+	if !strings.Contains(p.Description, "secondary/UDN networks") || !strings.Contains(p.Description, "approximates MNP ACLs") {
+		t.Errorf("description = %q", p.Description)
+	}
+	// With no MNPs the panel is legitimately empty; verify-panels must treat
+	// it as idle-allowed.
+	b, err := os.ReadFile("../verify-panels.sh")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(b), `"ACLs per MNP rule"`) {
+		t.Error(`hack/verify-panels.sh idle_rule has no "ACLs per MNP rule" entry`)
+	}
+}
+
+func TestPGDriftStatDescribesDisabledCase(t *testing.T) {
+	p := panelByTitle(t, Build(Options{}), "Nodes with PG drift")
+	if want := "0 also when --pg-drift=false; check that ovnkube_controller_port_group_with_ports exists"; p.Description != want {
+		t.Errorf("description = %q, want %q", p.Description, want)
 	}
 }

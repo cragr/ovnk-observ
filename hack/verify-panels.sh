@@ -44,7 +44,7 @@ idle_rule() {
 	case "$1" in
 	"Nodes with drift") echo "ovnk:pg_drift:missing_by_node" ;;
 	"Full-recompute events") echo "ovnk:northd_full_recompute:increase_5m" ;;
-	"Object events/min by resource/op" | "Object events/min by manager" | "MNP rules & peers")
+	"Object events/min by resource/op" | "Object events/min by manager" | "MNP rules & peers" | "ACLs per MNP rule")
 		echo 'ovnk_observ_informer_synced{resource="mnp"}' ;;
 	esac
 }

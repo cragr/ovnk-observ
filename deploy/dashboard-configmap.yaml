@@ -139,6 +139,7 @@ data:
               "type": "singlestat",
               "span": 2,
               "datasource": "$datasource",
+              "description": "0 also when --pg-drift=false; check that ovnkube_controller_port_group_with_ports exists",
               "targets": [
                 {
                   "expr": "ovnk:pg_drift:nodes",
@@ -944,10 +945,10 @@ data:
               "type": "singlestat",
               "span": 4,
               "datasource": "$datasource",
-              "description": "Policy ACLs on the busiest node per MultiNetworkPolicy rule",
+              "description": "Policy ACLs on secondary/UDN networks on the busiest node (which approximates MNP ACLs) per MultiNetworkPolicy rule",
               "targets": [
                 {
-                  "expr": "max(sum by (node) (max without (instance, pod, endpoint, container, service) (ovnkube_controller_nb_db_objects{table=\"ACL\",owner_type=\"NetworkPolicy\"}))) / clamp_min(sum(max without (instance, pod, endpoint, container, service) (ovnkube_clustermanager_multi_network_policy_rules)), 1)",
+                  "expr": "max(sum by (node) (max without (instance, pod, endpoint, container, service) (ovnkube_controller_nb_db_objects{table=\"ACL\",owner_type=\"NetworkPolicy\",network!=\"default\"}))) / clamp_min(sum(max without (instance, pod, endpoint, container, service) (ovnkube_clustermanager_multi_network_policy_rules)), 1)",
                   "legendFormat": "",
                   "refId": "A"
                 }

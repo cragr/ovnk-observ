@@ -322,7 +322,8 @@ func Build(o Options) Dashboard {
 	critAtOne := []Threshold{step(colorOK, -1), step(colorCrit, 0.5)}
 	rows := []Row{
 		row("At a glance",
-			stat("Nodes with PG drift", "short", 2, critAtOne, `ovnk:pg_drift:nodes`),
+			describe(stat("Nodes with PG drift", "short", 2, critAtOne, `ovnk:pg_drift:nodes`),
+				"0 also when --pg-drift=false; check that ovnkube_controller_port_group_with_ports exists"),
 			stat("Worst northd recompute ratio", "percentunit", 2, warnCrit(0.2, 0.5),
 				`max(ovnk:northd_recompute:ratio_15m{engine_node=~"northd|lflow"})`),
 			stat("Max NB→SB lag", "s", 1, warnCrit(10, 30), `max(ovnk:nb_sb_e2e_lag_seconds)`),
@@ -368,8 +369,8 @@ func Build(o Options) Dashboard {
 			stat("Largest NB DB", "bytes", 2, nil, `max(ovn_db_db_size_bytes{db_name="OVN_Northbound"})`),
 			amplification(),
 			describe(stat("ACLs per MNP rule", "short", 4, nil,
-				`max(sum by (node) (`+dedupe(`ovnkube_controller_nb_db_objects{table="ACL",owner_type="NetworkPolicy"}`)+`)) / clamp_min(sum(`+dedupe("ovnkube_clustermanager_multi_network_policy_rules")+`), 1)`),
-				"Policy ACLs on the busiest node per MultiNetworkPolicy rule"),
+				`max(sum by (node) (`+dedupe(`ovnkube_controller_nb_db_objects{table="ACL",owner_type="NetworkPolicy",network!="default"}`)+`)) / clamp_min(sum(`+dedupe("ovnkube_clustermanager_multi_network_policy_rules")+`), 1)`),
+				"Policy ACLs on secondary/UDN networks on the busiest node (which approximates MNP ACLs) per MultiNetworkPolicy rule"),
 			graph("Kubernetes network objects", "short", 4,
 				t(`sum by (managed_by) (`+dedupe("ovnkube_clustermanager_network_attachment_definitions")+`)`, "NADs ({{managed_by}})"),
 				t(`sum(`+dedupe("ovnkube_clustermanager_multi_network_policies")+`)`, "MultiNetworkPolicies"),
