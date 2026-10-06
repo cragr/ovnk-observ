@@ -97,7 +97,7 @@ After a deploy or rollout, allow 1 to 2 minutes before running `verify-counts` o
 - Prototype. The metrics are named for upstream adoption but are not in OVN-Kubernetes today.
 - The cluster exporter discovers CRDs once at start. A CRD installed later (for example, UDN) or a transient discovery error leaves that resource unwatched until the cluster pod restarts.
 - The node DaemonSet hard-codes the OVN-IC hostPath `/var/run/ovn-ic`. It does not work in non-IC (central) mode.
-- northd `.ctl` discovery reads `ovn-northd.pid` beside the NB socket and connects to `ovn-northd.<pid>.ctl`. This is not yet confirmed on a live cluster. If it fails, inc-engine series are absent and `ovnk_observ_appctl_errors_total` increases.
+- northd `.ctl` discovery reads `ovn-northd.pid` beside the NB socket and connects to `ovn-northd.<pid>.ctl`. Confirmed on a lab cluster (OVN 25.09.3, OCP 4.21): `ovn-northd.pid` and `ovn-northd.<pid>.ctl` sit next to the NB socket, and the exported counters match `inc-engine/show-stats`. If it fails, inc-engine series are absent and `ovnk_observ_appctl_errors_total` increases.
 - Drift is exported only while both NB and SB are synced. During the initial dump or a reconnect the series are absent, not zero.
 - The churn `manager` label is first-N: the first N distinct managers seen keep their own value for the life of the process, and later ones count under `_other`. The assignment resets on restart.
 - The initial dump of about 940k rows takes tens of seconds, during which the object series are absent.
