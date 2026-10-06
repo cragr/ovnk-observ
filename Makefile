@@ -5,7 +5,7 @@ HOST_OS := $(shell go env GOOS)
 HOST_ARCH := $(shell go env GOARCH)
 
 IMG ?= quay.io/cragr/ovnk-observ-exporter
-VERSION ?= v0.1.0
+VERSION ?= v0.2.0
 KUSTOMIZE := bin/kustomize-$(KUSTOMIZE_VERSION)
 INSTALL_MANIFEST := install/ovnk-observ.yaml
 

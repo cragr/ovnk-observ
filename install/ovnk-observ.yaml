@@ -162,7 +162,7 @@ spec:
         - --inc-engine=true
         - --nb-socket=/var/run/ovn/ovnnb_db.sock
         - --sb-socket=/var/run/ovn/ovnsb_db.sock
-        image: quay.io/cragr/ovnk-observ-exporter:v0.1.0
+        image: quay.io/cragr/ovnk-observ-exporter:v0.2.0
         imagePullPolicy: IfNotPresent
         livenessProbe:
           httpGet:
@@ -232,7 +232,7 @@ spec:
         - --mode=cluster
         - --listen=:9410
         - --churn-manager-label=topN:10
-        image: quay.io/cragr/ovnk-observ-exporter:v0.1.0
+        image: quay.io/cragr/ovnk-observ-exporter:v0.2.0
         imagePullPolicy: IfNotPresent
         livenessProbe:
           httpGet:

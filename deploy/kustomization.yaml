@@ -13,4 +13,4 @@ sortOptions:
   order: fifo
 images:
 - name: quay.io/cragr/ovnk-observ-exporter
-  newTag: v0.1.0
+  newTag: v0.2.0
