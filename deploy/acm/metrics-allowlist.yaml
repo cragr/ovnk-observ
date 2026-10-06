@@ -1,7 +1,7 @@
-# Apply on the ACM hub, not on managed clusters. ACM merges this list with its
-# default allowlist and forwards matching series from each managed cluster's
-# platform Prometheus. Applying replaces any existing ConfigMap of this name:
-# merge your entries in first.
+# The ovnk-observ metrics the ACM hub must forward (from each managed
+# cluster's platform Prometheus). Do not apply this file directly: it would
+# replace the hub's existing custom allowlist. `make acm-allowlist` merges
+# these names into the live ConfigMap instead.
 apiVersion: v1
 kind: ConfigMap
 metadata:

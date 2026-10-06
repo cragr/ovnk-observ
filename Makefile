@@ -9,7 +9,7 @@ VERSION ?= v0.2.0
 KUSTOMIZE := bin/kustomize-$(KUSTOMIZE_VERSION)
 INSTALL_MANIFEST := install/ovnk-observ.yaml
 
-.PHONY: build test tools image-build image-push image-dev deploy deploy-release undeploy set-version install-manifest render-install verify-install-manifest verify-counts integration rules-test rules-gen dashboard dashboard-apply verify-panels
+.PHONY: build test tools image-build image-push image-dev deploy deploy-release undeploy set-version install-manifest render-install verify-install-manifest verify-counts integration rules-test rules-gen dashboard dashboard-apply verify-panels acm-allowlist
 
 build:
 	CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -o bin/ovnk-observ-exporter ./cmd/ovnk-observ-exporter
@@ -130,6 +130,15 @@ dashboard:
 
 dashboard-apply:
 	oc apply -f deploy/dashboard-configmap.yaml
+
+# Run against the ACM hub. Merges the ovnk-observ names into the hub's existing
+# custom allowlist (never replaces it) and writes the result for review; it
+# does not apply anything.
+ACM_ALLOWLIST_OUT ?= acm-allowlist-merged.yaml
+acm-allowlist:
+	@bash -o pipefail -c 'oc get cm observability-metrics-custom-allowlist -n open-cluster-management-observability -o yaml --ignore-not-found \
+	  | go run ./hack/acmallow -add deploy/acm/metrics-allowlist.yaml > $(ACM_ALLOWLIST_OUT)'
+	@echo "Wrote $(ACM_ALLOWLIST_OUT). Review: oc diff -f $(ACM_ALLOWLIST_OUT)   Apply: oc apply -f $(ACM_ALLOWLIST_OUT)"
 
 verify-panels:
 	hack/verify-panels.sh
