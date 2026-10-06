@@ -1,0 +1,21 @@
+# Apply on the ACM hub, not on managed clusters. ACM merges this list with its
+# default allowlist and forwards matching series from each managed cluster's
+# platform Prometheus. Applying replaces any existing ConfigMap of this name:
+# merge your entries in first.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: observability-metrics-custom-allowlist
+  namespace: open-cluster-management-observability
+data:
+  metrics_list.yaml: |
+    names:
+      # northd inc-engine/show-stats, allowlisted engine nodes only
+      - ovn_northd_inc_engine_runs_total
+      - ovnk:northd_recompute:ratio_15m
+      - ovnk:northd_full_recompute:increase_5m
+      # NB/SB Port_Group drift
+      - ovnk:pg_drift:missing_by_node
+      - ovnk:pg_drift:nodes
+      # Non-zero means inc-engine series are missing on that node
+      - ovnk_observ_appctl_errors_total
