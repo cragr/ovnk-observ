@@ -37,6 +37,8 @@ spec:
             - --mode=node
             - --listen=:9410
             - --per-network-labels=topN:50
+            - --pg-drift=true
+            - --inc-engine=true
             - --nb-socket=/var/run/ovn/ovnnb_db.sock
             - --sb-socket=/var/run/ovn/ovnsb_db.sock
           ports:

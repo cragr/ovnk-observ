@@ -1,0 +1,312 @@
+Node: NB_acl
+- recompute:      4936399
+- compute:              0
+- cancel:               0
+Node: SB_acl_id
+- recompute:      4936399
+- compute:              0
+- cancel:               0
+Node: acl_id
+- recompute:        13365
+- compute:              0
+- cancel:               0
+Node: NB_mirror
+- recompute:      4936399
+- compute:              0
+- cancel:               0
+Node: NB_mirror_rule
+- recompute:      4936399
+- compute:              0
+- cancel:               0
+Node: NB_static_mac_binding
+- recompute:      4936399
+- compute:              0
+- cancel:               0
+Node: NB_chassis_template_var
+- recompute:      4936399
+- compute:              0
+- cancel:               0
+Node: SB_chassis
+- recompute:      4936399
+- compute:              0
+- cancel:               0
+Node: SB_mirror
+- recompute:      4936399
+- compute:              0
+- cancel:               0
+Node: SB_meter
+- recompute:      4936399
+- compute:              0
+- cancel:               0
+Node: SB_dns
+- recompute:      4936399
+- compute:              0
+- cancel:               0
+Node: SB_ha_chassis_group
+- recompute:      4936399
+- compute:              0
+- cancel:               0
+Node: SB_ip_multicast
+- recompute:      4936399
+- compute:              0
+- cancel:               0
+Node: SB_service_monitor
+- recompute:      4936399
+- compute:              0
+- cancel:               0
+Node: SB_static_mac_binding
+- recompute:      4936399
+- compute:              0
+- cancel:               0
+Node: SB_chassis_template_var
+- recompute:      4936399
+- compute:              0
+- cancel:               0
+Node: ic_learned_svc_monitors
+- recompute:          158
+- compute:              0
+- cancel:               0
+Node: SB_fdb
+- recompute:      4936399
+- compute:              0
+- cancel:               0
+Node: NB_nb_global
+- recompute:      4936399
+- compute:              0
+- cancel:               0
+Node: NB_logical_switch
+- recompute:      4936399
+- compute:              0
+- cancel:               0
+Node: SB_sb_global
+- recompute:      4936399
+- compute:              0
+- cancel:               0
+Node: NB_sampling_app
+- recompute:      4936399
+- compute:              0
+- cancel:               0
+Node: sampling_app
+- recompute:          158
+- compute:              0
+- cancel:               0
+Node: global_config
+- recompute:          158
+- compute:         494792
+- cancel:               0
+Node: SB_mac_binding
+- recompute:      4936399
+- compute:              0
+- cancel:               0
+Node: SB_port_binding
+- recompute:      4936399
+- compute:              0
+- cancel:               0
+Node: SB_datapath_binding
+- recompute:      4936399
+- compute:              0
+- cancel:               0
+Node: datapath_logical_switch
+- recompute:          158
+- compute:         381676
+- cancel:               0
+Node: NB_logical_router
+- recompute:      4936399
+- compute:              0
+- cancel:               0
+Node: datapath_logical_router
+- recompute:          158
+- compute:          80663
+- cancel:               0
+Node: datapath_sync
+- recompute:          158
+- compute:         401556
+- cancel:               0
+Node: datapath_synced_logical_switch
+- recompute:          158
+- compute:         288325
+- cancel:               0
+Node: datapath_synced_logical_router
+- recompute:          158
+- compute:         288325
+- cancel:               0
+Node: NB_load_balancer
+- recompute:      4936399
+- compute:              0
+- cancel:               0
+Node: NB_load_balancer_group
+- recompute:      4936399
+- compute:              0
+- cancel:               0
+Node: lb_data
+- recompute:          158
+- compute:         288325
+- cancel:               0
+Node: NB_port_group
+- recompute:      4936399
+- compute:              0
+- cancel:               0
+Node: northd
+- recompute:          167
+- compute:         716840
+- cancel:               0
+Node: sync_from_sb
+- recompute:       311729
+- compute:          58340
+- cancel:               0
+Node: lr_nat
+- recompute:          167
+- compute:         121856
+- cancel:               0
+Node: lr_stateful
+- recompute:          167
+- compute:         121856
+- cancel:               0
+Node: SB_address_set
+- recompute:      4936399
+- compute:              0
+- cancel:               0
+Node: NB_address_set
+- recompute:      4936399
+- compute:              0
+- cancel:               0
+Node: sync_to_sb_addr_set
+- recompute:       135239
+- compute:         782520
+- cancel:               0
+Node: SB_port_group
+- recompute:      4936399
+- compute:              0
+- cancel:               0
+Node: port_group
+- recompute:          158
+- compute:         302748
+- cancel:               0
+Node: NB_meter
+- recompute:      4936399
+- compute:              0
+- cancel:               0
+Node: sync_meters
+- recompute:        13311
+- compute:             54
+- cancel:               0
+Node: SB_load_balancer
+- recompute:      4936399
+- compute:              0
+- cancel:               0
+Node: SB_logical_dp_group
+- recompute:      4936399
+- compute:              0
+- cancel:               0
+Node: sync_to_sb_lb
+- recompute:          167
+- compute:         236187
+- cancel:               0
+Node: sync_to_sb_pb
+- recompute:        80825
+- compute:          41198
+- cancel:               0
+Node: sync_to_sb
+- recompute:       302925
+- compute:              0
+- cancel:               0
+Node: SB_logical_flow
+- recompute:      4936399
+- compute:              0
+- cancel:               0
+Node: SB_multicast_group
+- recompute:      4936399
+- compute:              0
+- cancel:               0
+Node: NB_bfd
+- recompute:      4936399
+- compute:              0
+- cancel:               0
+Node: SB_bfd
+- recompute:      4936399
+- compute:              0
+- cancel:               0
+Node: bfd
+- recompute:          158
+- compute:              0
+- cancel:               0
+Node: routes
+- recompute:          167
+- compute:         121856
+- cancel:               0
+Node: route_policies
+- recompute:          167
+- compute:         121856
+- cancel:               0
+Node: bfd_sync
+- recompute:          167
+- compute:         121856
+- cancel:               0
+Node: SB_learned_route
+- recompute:      4936399
+- compute:              0
+- cancel:               0
+Node: learned_route_sync
+- recompute:          167
+- compute:         121856
+- cancel:               0
+Node: group_ecmp_route
+- recompute:          167
+- compute:              0
+- cancel:               0
+Node: ls_stateful
+- recompute:          167
+- compute:         302687
+- cancel:               0
+Node: SB_igmp_group
+- recompute:      4936399
+- compute:              0
+- cancel:               0
+Node: multicast_igmp
+- recompute:          170
+- compute:         121856
+- cancel:               0
+Node: lflow
+- recompute:        13320
+- compute:         402740
+- cancel:               0
+Node: mac_binding_aging_waker
+- recompute:      4936399
+- compute:              0
+- cancel:               0
+Node: mac_binding_aging
+- recompute:       199763
+- compute:         113253
+- cancel:               0
+Node: fdb_aging_waker
+- recompute:      4936399
+- compute:              0
+- cancel:               0
+Node: fdb_aging
+- recompute:       122023
+- compute:         113256
+- cancel:               0
+Node: SB_ecmp_nexthop
+- recompute:      4936399
+- compute:              0
+- cancel:               0
+Node: ecmp_nexthop
+- recompute:       424733
+- compute:          64080
+- cancel:               0
+Node: dynamic_routes
+- recompute:        80825
+- compute:          41198
+- cancel:               0
+Node: SB_advertised_route
+- recompute:      4936399
+- compute:              0
+- cancel:               0
+Node: advertised_route_sync
+- recompute:        80825
+- compute:          41198
+- cancel:               0
+Node: northd_output
+- recompute:          158
+- compute:         666384
+- cancel:               0

@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"slices"
 	"unicode/utf8"
 
 	"github.com/cragr/ovnk-observ/pkg/nbcount"
@@ -36,6 +37,7 @@ type session struct {
 	dec     *json.Decoder
 	tables  map[string]TableSpec
 	counter *nbcount.Counter
+	hook    RowHook
 	log     *slog.Logger
 	echo    func(id, params json.RawMessage) error
 
@@ -47,7 +49,7 @@ func newSession(dec *json.Decoder, cfg Config, log *slog.Logger, echo func(id, p
 	for _, ts := range cfg.Tables {
 		t[ts.Name] = ts
 	}
-	return &session{dec: dec, tables: t, counter: cfg.Counter, log: log, echo: echo}
+	return &session{dec: dec, tables: t, counter: cfg.Counter, hook: cfg.Hook, log: log, echo: echo}
 }
 
 // readMessage decodes and handles exactly one top-level JSON-RPC message.
@@ -218,17 +220,36 @@ func (s *session) apply(spec TableSpec, uuidStr string, ru *rowUpdate, initial b
 	switch {
 	case ru.New != nil:
 		s.counter.Upsert(spec.Name, u, rowKey(spec, ru.New))
-		if !initial {
-			op := "insert"
-			if ru.Old != nil {
-				op = "modify"
-			}
-			s.counter.RecordUpdate(spec.Name, op)
+		if s.hook != nil {
+			s.hook.Upsert(spec.Name, u, ru.New)
+		}
+		switch {
+		case initial:
+		case ru.Old == nil:
+			s.counter.RecordUpdate(spec.Name, "insert")
+		case changesBase(spec, ru.Old):
+			s.counter.RecordUpdate(spec.Name, "modify")
 		}
 	case ru.Old != nil && !initial:
 		s.counter.Delete(spec.Name, u)
+		if s.hook != nil {
+			s.hook.Delete(spec.Name, u)
+		}
 		s.counter.RecordUpdate(spec.Name, "delete")
 	}
+}
+
+// changesBase reports whether a modify's "old" (which in monitor v1 lists only
+// the changed columns) touches a column outside spec.Extra. Changes confined to
+// Extra columns are not counted as NB updates, so monitoring extra columns does
+// not change the base updates metric.
+func changesBase(spec TableSpec, old map[string]json.RawMessage) bool {
+	for col := range old {
+		if !slices.Contains(spec.Extra, col) {
+			return true
+		}
+	}
+	return false
 }
 
 var constKey = nbcount.Key{OwnerType: "none", Network: "default"}

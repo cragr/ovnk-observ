@@ -23,6 +23,15 @@ func TestRunRejectsBadNetworkLabels(t *testing.T) {
 	}
 }
 
+func TestRunRejectsBadIncEngineNodes(t *testing.T) {
+	for _, v := range []string{"", " , "} {
+		err := run(context.Background(), []string{"--mode=node", "--inc-engine-nodes=" + v}, io.Discard)
+		if err == nil || !strings.Contains(err.Error(), "inc-engine-nodes") {
+			t.Fatalf("nodes %q: want inc-engine-nodes error, got %v", v, err)
+		}
+	}
+}
+
 func get(t *testing.T, url string) (int, string) {
 	t.Helper()
 	resp, err := http.Get(url)
@@ -60,6 +69,9 @@ func TestNodeModeServesMetricsWithoutSockets(t *testing.T) {
 	if code != 200 || !strings.Contains(body, `ovnk_observ_db_connected{db="nb"} 0`) {
 		t.Fatalf("metrics (%d) missing connected gauge:\n%s", code, body)
 	}
+	if !strings.Contains(body, `ovnk_observ_appctl_errors_total{command="inc-engine/show-stats"}`) {
+		t.Fatalf("metrics missing appctl errors counter:\n%s", body)
+	}
 	cancel()
 	select {
 	case err := <-done:
@@ -68,5 +80,50 @@ func TestNodeModeServesMetricsWithoutSockets(t *testing.T) {
 		}
 	case <-time.After(10 * time.Second):
 		t.Fatal("no shutdown")
+	}
+}
+
+func TestNodeModePGDriftFlag(t *testing.T) {
+	addrCh := make(chan string, 1)
+	onListen = func(a string) { addrCh <- a }
+	defer func() { onListen = nil }()
+
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan error, 1)
+	go func() {
+		done <- run(ctx, []string{"--mode=node", "--pg-drift=false", "--listen=127.0.0.1:0",
+			"--nb-socket=/nonexistent/nb.sock", "--sb-socket=/nonexistent/sb.sock"}, io.Discard)
+	}()
+	var addr string
+	select {
+	case addr = <-addrCh:
+	case err := <-done:
+		t.Fatalf("run exited early: %v", err)
+	case <-time.After(5 * time.Second):
+		t.Fatal("timeout waiting for listen")
+	}
+	code, body := get(t, "http://"+addr+"/metrics")
+	if code != 200 || !strings.Contains(body, `ovnk_observ_db_connected{db="nb"} 0`) {
+		t.Fatalf("metrics (%d) missing connected gauge:\n%s", code, body)
+	}
+	if strings.Contains(body, "port_group_sb_missing") {
+		t.Fatalf("drift series present with --pg-drift=false:\n%s", body)
+	}
+	cancel()
+	select {
+	case err := <-done:
+		if err != nil {
+			t.Fatalf("shutdown err: %v", err)
+		}
+	case <-time.After(10 * time.Second):
+		t.Fatal("no shutdown")
+	}
+}
+
+func TestRunRejectsBadChurnManagerLabel(t *testing.T) {
+	err := run(context.Background(), []string{"--mode=cluster", "--churn-manager-label=top:5"}, io.Discard)
+	if err == nil || !strings.Contains(err.Error(), `invalid --churn-manager-label "top:5"`) ||
+		strings.Contains(err.Error(), "per-network-labels") {
+		t.Fatalf("want an invalid --churn-manager-label error naming only that flag, got %v", err)
 	}
 }

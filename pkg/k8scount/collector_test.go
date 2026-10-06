@@ -33,6 +33,14 @@ func obj(gvk schema.GroupVersionKind, ns, name string, extra map[string]interfac
 
 func newCollector(t *testing.T, existing []schema.GroupVersionResource, np []*networkingv1.NetworkPolicy, objs ...runtime.Object) prometheus.Collector {
 	t.Helper()
+	c, _ := newCollectorOpts(t, Options{ManagerLabels: 10}, existing, np, objs...)
+	return c
+}
+
+// newCollectorOpts is newCollector with explicit Options; it also returns
+// the dynamic client so tests can create objects after the initial sync.
+func newCollectorOpts(t *testing.T, opts Options, existing []schema.GroupVersionResource, np []*networkingv1.NetworkPolicy, objs ...runtime.Object) (prometheus.Collector, *dynfake.FakeDynamicClient) {
+	t.Helper()
 	kinds := map[schema.GroupVersionResource]string{
 		nadGVR: "NetworkAttachmentDefinitionList", mnpGVR: "MultiNetworkPolicyList",
 		udnGVR: "UserDefinedNetworkList", cudnGVR: "ClusterUserDefinedNetworkList",
@@ -72,11 +80,11 @@ func newCollector(t *testing.T, existing []schema.GroupVersionResource, np []*ne
 	}
 	ctx, cancel := context.WithCancel(context.Background())
 	t.Cleanup(cancel)
-	c, err := NewCollector(ctx, dyn, kube)
+	c, err := NewCollector(ctx, dyn, kube, opts)
 	if err != nil {
 		t.Fatalf("NewCollector: %v", err)
 	}
-	return c
+	return c, dyn
 }
 
 // eventually polls until the collector output matches expected for names.
@@ -199,4 +207,36 @@ func TestCollectorConcurrentScrapes(t *testing.T) {
 	for i := 0; i < 8; i++ {
 		<-done
 	}
+}
+
+func TestCollectorCountsMNPRulesAndPeers(t *testing.T) {
+	a := obj(mnpGVK, "ns1", "a", map[string]interface{}{"spec": map[string]interface{}{
+		"ingress": []interface{}{
+			map[string]interface{}{"from": []interface{}{"x", "y"}},
+			map[string]interface{}{"from": []interface{}{"z"}},
+		},
+		"egress": []interface{}{map[string]interface{}{"to": []interface{}{"x"}}},
+	}})
+	b := obj(mnpGVK, "ns1", "b", map[string]interface{}{"spec": map[string]interface{}{
+		"ingress": []interface{}{map[string]interface{}{"from": []interface{}{"x", "y", "z"}}},
+	}})
+	// No spec.ingress at all: ingress emits 0 and nothing panics.
+	n := obj(mnpGVK, "ns2", "c", map[string]interface{}{"spec": map[string]interface{}{
+		"egress": []interface{}{map[string]interface{}{"to": []interface{}{"x", "y"}}},
+	}})
+	c := newCollector(t, allGVRs, nil, a, b, n)
+	eventually(t, c, `
+# HELP ovnkube_clustermanager_multi_network_policy_peers Number of from/to peers across MultiNetworkPolicy rules.
+# TYPE ovnkube_clustermanager_multi_network_policy_peers gauge
+ovnkube_clustermanager_multi_network_policy_peers{direction="egress",namespace="ns1"} 1
+ovnkube_clustermanager_multi_network_policy_peers{direction="egress",namespace="ns2"} 2
+ovnkube_clustermanager_multi_network_policy_peers{direction="ingress",namespace="ns1"} 6
+ovnkube_clustermanager_multi_network_policy_peers{direction="ingress",namespace="ns2"} 0
+# HELP ovnkube_clustermanager_multi_network_policy_rules Number of ingress/egress rules across MultiNetworkPolicies.
+# TYPE ovnkube_clustermanager_multi_network_policy_rules gauge
+ovnkube_clustermanager_multi_network_policy_rules{direction="egress",namespace="ns1"} 1
+ovnkube_clustermanager_multi_network_policy_rules{direction="egress",namespace="ns2"} 1
+ovnkube_clustermanager_multi_network_policy_rules{direction="ingress",namespace="ns1"} 3
+ovnkube_clustermanager_multi_network_policy_rules{direction="ingress",namespace="ns2"} 0
+`, "ovnkube_clustermanager_multi_network_policy_rules", "ovnkube_clustermanager_multi_network_policy_peers")
 }

@@ -4,7 +4,9 @@ metadata:
   name: ovnk-observ-exporter
   namespace: ovnk-observ
 spec:
-  # Lets pods in this namespace use the short name ovnk-observ-exporter:latest.
+  # Local lookup lets the short name ovnk-observ-exporter:latest resolve where
+  # admission supports it. Pods do not rely on it: make image-dev pins them to
+  # this ImageStream's digest (see overlays/dev/image-lookup.yaml).
   lookupPolicy:
     local: true
 ---

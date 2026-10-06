@@ -34,6 +34,8 @@ oc wait pod/"$POD" -n "$NS" --for=condition=Ready --timeout=180s
 oc cp bin/ovsdbmon.test "$NS/$POD:/tmp/ovsdbmon.test" -c it
 out=$(mktemp)
 trap 'rm -f "$out"; cleanup' EXIT
-oc exec -n "$NS" "$POD" -c it -- sh -c 'chmod +x /tmp/ovsdbmon.test && /tmp/ovsdbmon.test -test.v -test.run TestMonitorAgainstRealOVSDBServer' | tee "$out"
+oc exec -n "$NS" "$POD" -c it -- sh -c 'chmod +x /tmp/ovsdbmon.test && /tmp/ovsdbmon.test -test.v -test.run "TestMonitorAgainstRealOVSDBServer|TestPGDriftAgainstRealOVSDBServer"' | tee "$out"
 # A skipped or missing test must not read as success.
-grep -q -- '--- PASS: TestMonitorAgainstRealOVSDBServer' "$out" || { echo "integration test did not report PASS" >&2; exit 1; }
+for t in TestMonitorAgainstRealOVSDBServer TestPGDriftAgainstRealOVSDBServer; do
+	grep -q -- "--- PASS: $t" "$out" || { echo "integration test $t did not report PASS" >&2; exit 1; }
+done

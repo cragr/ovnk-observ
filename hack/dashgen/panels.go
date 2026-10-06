@@ -189,11 +189,16 @@ const (
 
 // join attaches the node label to series that only carry namespace/pod (the
 // OVN and ovnkube metrics scraped from openshift-ovn-kubernetes pods) and
-// applies the $node filter. max by() guards against duplicate kube_pod_info
-// series turning the match into many-to-many.
+// applies the $node filter. ovnk:ovn_pod_node:info is kube_pod_info already
+// restricted to openshift-ovn-kubernetes and deduplicated by
+// (namespace, pod, node), so the match stays one-to-one and small.
 func join(expr string) string {
-	return expr + ` * on (namespace, pod) group_left(node) max by (namespace, pod, node) (kube_pod_info{` + nodeSel + `})`
+	return expr + ` * on (namespace, pod) group_left(node) ovnk:ovn_pod_node:info{` + nodeSel + `}`
 }
+
+// top keeps the 10 largest series of a per-node query, so that a graph with
+// $node = All renders the worst nodes rather than every node.
+func top(expr string) string { return "topk(10, " + expr + ")" }
 
 // dedupe drops the scrape-target labels of exporter series so that an old
 // and a new pod scraped together during a rollout (cluster or node mode)
@@ -279,6 +284,14 @@ func row(title string, panels ...Panel) Row {
 	return Row{Title: title, Height: "250px", ShowTitle: true, Panels: panels}
 }
 
+// labelTable is a table that shows only labels: the value column is hidden
+// (for info metrics such as cluster_version, whose value is not meaningful).
+func labelTable(title string, span int, labels []string, expr string) Panel {
+	p := table(title, span, labels, col(expr, ""))
+	p.Styles[len(labels)+1].Type = "hidden"
+	return p
+}
+
 func rate(metric string) string { return "rate(" + metric + "[$interval])" }
 
 // rate1h is for sparse histograms (tens of events per hour): a shorter rate
@@ -287,22 +300,77 @@ func rate1h(metric string) string { return "rate(" + metric + "[1h])" }
 
 func sel(metric, matchers string) string { return metric + "{" + matchers + "}" }
 
-// Build returns the full dashboard.
-func Build() Dashboard {
+// Options are the generator inputs that vary per install.
+type Options struct {
+	// ACLLogURL, when set, adds a dashboard link (opened in a new tab) to an
+	// external ACL allow/deny or NetObserv drop view.
+	ACLLogURL string
+	// ACLLogTitle is that link's title; empty means DefaultACLLogTitle.
+	ACLLogTitle string
+}
+
+// DefaultACLLogTitle is the ACL log link title when none is given.
+const DefaultACLLogTitle = "ACL allow/deny"
+
+// withPortsByNode is the number of NB Port_Groups with ports, per node.
+const withPortsByNode = "max by (node) (max without (instance, pod, endpoint, container, service) (ovnkube_controller_port_group_with_ports))"
+
+// Build returns the full dashboard. Rows follow the triage path: in sync?
+// what is changing? how big? is OVN-K keeping up? then the collapsed
+// per-process internals and the exporter's own cost.
+func Build(o Options) Dashboard {
+	critAtOne := []Threshold{step(colorOK, -1), step(colorCrit, 0.5)}
 	rows := []Row{
 		row("At a glance",
+			describe(stat("Nodes with PG drift", "short", 2, critAtOne, `ovnk:pg_drift:nodes`),
+				"0 also when --pg-drift=false; check that ovnkube_controller_port_group_with_ports exists"),
+			stat("Worst northd recompute ratio", "percentunit", 2, warnCrit(0.2, 0.5),
+				`max(ovnk:northd_recompute:ratio_15m{engine_node=~"northd|lflow"})`),
+			stat("Max NB→SB lag", "s", 1, warnCrit(10, 30), `max(ovnk:nb_sb_e2e_lag_seconds)`),
+			// One series per ovnkube-node pod (one per node) with any OVN DB
+			// connection down, not one per down connection.
+			stat("Nodes disconnected", "short", 1, critAtOne,
+				`count(count by (namespace, pod) (ovn_northd_nb_connection_status == 0 or ovn_northd_sb_connection_status == 0 or ovn_controller_southbound_database_connected == 0)) or vector(0)`),
+			stat("Retry failures 15m", "short", 1, nil, `sum(increase(ovnkube_resource_retry_failures_total[15m]))`),
+			stat("ovnkube restarts 1h", "short", 1, warnCrit(1, 5),
+				`sum(increase(kube_pod_container_status_restarts_total{`+ovnNS+`}[1h]))`),
+			stat("Nodes not Ready", "short", 1, critAtOne,
+				`count(kube_node_status_condition{condition="Ready",status="true"} == 0) or vector(0)`),
+			// Singlestats render values, not labels, so the version is a table.
+			labelTable("Cluster version", 3, []string{"version"}, `cluster_version{type="current"}`),
+		),
+		row("Consistency",
+			describe(table("Nodes with drift", 6, []string{"node"},
+				col(`ovnk:pg_drift:missing_by_node > 0`, "Missing"),
+				col(withPortsByNode+` and on (node) (ovnk:pg_drift:missing_by_node > 0)`, "With ports"),
+				col(`(ovnk:pg_drift:missing_by_node > 0) / on (node) clamp_min(`+withPortsByNode+`, 1)`, "Ratio")),
+				"NB Port_Groups with ports that are missing from the node's SB; these nodes need a recompute."),
+			graph("PG drift over time", "short", 6,
+				t(top(sel("ovnk:pg_drift:missing_by_node", nodeSel)), "{{node}}")),
+			graph("northd recompute ratio", "percentunit", 6,
+				t(top(sel("ovnk:northd_recompute:ratio_15m", nodeSel)), "{{node}} {{engine_node}}")),
+			describe(graph("Full-recompute events", "short", 6,
+				t(top(sel("ovnk:northd_full_recompute:increase_5m", nodeSel)), "{{node}}")),
+				"Includes manual inc-engine/recompute and northd restarts"),
+		),
+		row("Change & churn",
+			graph("Object events/min by resource/op", "short", 6,
+				t(`ovnk:object_events:rate_5m * 60`, "{{resource}} {{op}}")),
+			graph("Object events/min by manager", "short", 6,
+				t(`sum by (manager) (`+dedupe(rate("ovnkube_clustermanager_object_events_total"))+`) * 60`, "{{manager}}")),
+			graph("NB update rate by table/op", "ops", 6,
+				t(`sum by (table, op) (`+dedupe(rate(sel("ovnkube_controller_nb_db_updates_total", nodeSel)))+`)`, "{{table}} {{op}}")),
+			graph("Txn failure ratio", "percentunit", 6,
+				t(top(sel("ovnk:ovn_txn_failure:ratio_5m", nodeSel)), "{{node}} {{component}}")),
+		),
+		row("Scale & fan-out",
 			stat("Max NB ACLs on a node", "short", 2, nil, `ovnk:nb_db_objects:max_by_table{table="ACL"}`),
 			stat("Max NB PortGroups on a node", "short", 2, nil, `ovnk:nb_db_objects:max_by_table{table="Port_Group"}`),
 			stat("Largest NB DB", "bytes", 2, nil, `max(ovn_db_db_size_bytes{db_name="OVN_Northbound"})`),
 			amplification(),
-			programmingP99(),
-			stat("Retry failures 15m", "short", 1, nil, `sum(increase(ovnkube_resource_retry_failures_total[15m]))`),
-			// One series per ovnkube-node pod (one per node) with any OVN DB
-			// connection down, not one per down connection.
-			stat("Nodes disconnected", "short", 1, []Threshold{step(colorOK, -1), step(colorCrit, 0.5)},
-				`count(count by (namespace, pod) (ovn_northd_nb_connection_status == 0 or ovn_northd_sb_connection_status == 0 or ovn_controller_southbound_database_connected == 0)) or vector(0)`),
-		),
-		row("Scale & inventory",
+			describe(stat("ACLs per MNP rule", "short", 4, nil,
+				`max(sum by (node) (`+dedupe(`ovnkube_controller_nb_db_objects{table="ACL",owner_type="NetworkPolicy",network!="default"}`)+`)) / clamp_min(sum(`+dedupe("ovnkube_clustermanager_multi_network_policy_rules")+`), 1)`),
+				"Policy ACLs on secondary/UDN networks on the busiest node (which approximates MNP ACLs) per MultiNetworkPolicy rule"),
 			graph("Kubernetes network objects", "short", 4,
 				t(`sum by (managed_by) (`+dedupe("ovnkube_clustermanager_network_attachment_definitions")+`)`, "NADs ({{managed_by}})"),
 				t(`sum(`+dedupe("ovnkube_clustermanager_multi_network_policies")+`)`, "MultiNetworkPolicies"),
@@ -313,17 +381,20 @@ func Build() Dashboard {
 			// magnitude, so they get their own axis.
 			graph("MultiNetworkPolicy network targets", "short", 4,
 				t(`sum(`+dedupe("ovnkube_clustermanager_multi_network_policy_network_targets")+`)`, "MultiNetworkPolicy network targets")),
-			graph("NB objects per node by table", "short", 4,
-				t(sel("ovnk:nb_db_objects:sum_by_node_table", nodeSel), "{{node}} {{table}}")),
-			table("Top networks by ACL / PortGroup", 4, []string{"network", "table"},
+			graph("MNP rules & peers", "short", 4,
+				t(`sum by (direction) (`+dedupe("ovnkube_clustermanager_multi_network_policy_rules")+`)`, "rules {{direction}}"),
+				t(`sum by (direction) (`+dedupe("ovnkube_clustermanager_multi_network_policy_peers")+`)`, "peers {{direction}}")),
+			table("Top networks by ACL / PortGroup", 6, []string{"network", "table"},
 				col(`topk(15, ovnk:nb_db_objects:max_by_network_table{table=~"ACL|Port_Group",network=~"$network"})`, "Objects (max over nodes)")),
-			graph("NB ACL vs SB Logical_Flow", "short", 4,
-				t(`ovnk:nb_db_objects:sum_by_node_table{table="ACL",`+nodeSel+`}`, "{{node}} NB ACL"),
-				t(`sum by (node) (`+dedupe(`ovnkube_controller_sb_db_objects{table="Logical_Flow",`+nodeSel+`}`)+`)`, "{{node}} SB Logical_Flow")),
-			graph("ACLs by owner type", "short", 4,
+			table("NB objects by node", 6, []string{"node", "table"},
+				col(top(`ovnk:nb_db_objects:sum_by_node_table{table=~"ACL|Port_Group",`+nodeSel+`}`), "Objects")),
+			describe(graph("SB/NB effectiveness", "short", 6,
+				t(top(sel("ovnk:nb_sb_effectiveness:ratio", nodeSel)), "{{node}}")),
+				"SB Logical_Flows per NB ACL on each node"),
+			graph("ACLs by owner type", "short", 6,
 				t(`sum by (owner_type) (`+dedupe(`ovnkube_controller_nb_db_objects{table="ACL",`+nodeSel+`,network=~"$network"}`)+`)`, "{{owner_type}}")),
 		),
-		row("Programming latency & backlog",
+		row("Programming latency",
 			// ~34 events/h on the lab: fixed 1h window, not $interval.
 			graph("Network programming p50/p99 (1h window)", "s", 4,
 				t(`histogram_quantile(0.5, sum by (le, kind) (`+join(rate1h("ovnkube_controller_network_programming_duration_seconds_bucket"))+`))`, "{{kind}} p50"),
@@ -333,71 +404,67 @@ func Build() Dashboard {
 				t(`sum by (kind) (`+join(rate("ovnkube_controller_network_programming_duration_seconds_count"))+`) * 60`, "{{kind}}")),
 			// The resource latency histograms carry no kind-like label on this
 			// OVN-K version (label_names: le + target labels only), so the
-			// split is by operation; J adds the $node filter.
-			graph("Resource add/update/delete p99", "s", 4,
-				t(`histogram_quantile(0.99, sum by (le) (`+join(rate("ovnkube_controller_resource_add_latency_seconds_bucket"))+`))`, "add"),
-				t(`histogram_quantile(0.99, sum by (le) (`+join(rate("ovnkube_controller_resource_update_latency_seconds_bucket"))+`))`, "update"),
-				t(`histogram_quantile(0.99, sum by (le) (`+join(rate("ovnkube_controller_resource_delete_latency_seconds_bucket"))+`))`, "delete")),
+			// split is by operation. Events are as sparse as network
+			// programming, so the window is 1h too.
+			graph("Resource add/update/delete p99 (1h window)", "s", 4,
+				t(`histogram_quantile(0.99, sum by (le) (`+join(rate1h("ovnkube_controller_resource_add_latency_seconds_bucket"))+`))`, "add"),
+				t(`histogram_quantile(0.99, sum by (le) (`+join(rate1h("ovnkube_controller_resource_update_latency_seconds_bucket"))+`))`, "update"),
+				t(`histogram_quantile(0.99, sum by (le) (`+join(rate1h("ovnkube_controller_resource_delete_latency_seconds_bucket"))+`))`, "delete")),
 			describe(graph("Pod setup pipeline p99 (1h window)", "s", 4, t(`ovnk:pod_setup_stage:p99_1h`, "{{stage}}")),
 				"p99 per pod-setup stage over the last hour. Per-stage p99s are not additive, so the lines are not stacked."),
 			graph("Retry failures by node", "short", 4,
-				t(`sum by (node) (`+join(rate("ovnkube_resource_retry_failures_total"))+`)`, "{{node}}")),
+				t(top(`sum by (node) (`+join(rate("ovnkube_resource_retry_failures_total"))+`)`), "{{node}}")),
 			graph("NB→SB lag / probe staleness", "s", 4,
-				t(sel("ovnk:nb_sb_e2e_lag_seconds", nodeSel), "{{node}} NB→SB lag"),
-				t(sel("ovnk:e2e_probe_staleness_seconds", nodeSel), "{{node}} probe staleness")),
+				t(top(sel("ovnk:nb_sb_e2e_lag_seconds", nodeSel)), "{{node}} NB→SB lag"),
+				t(top(sel("ovnk:e2e_probe_staleness_seconds", nodeSel)), "{{node}} probe staleness")),
 		),
-		row("NB/SB DB health",
-			graph("DB size", "bytes", 6, t(join("ovn_db_db_size_bytes"), "{{node}} {{db_name}}")),
+		row("OVN internals",
+			graph("northd loop p95 / max", "ms", 6,
+				t(top(join("ovn_northd_ovn_northd_loop_95th_percentile")), "{{node}} p95"),
+				t(top(join("ovn_northd_ovn_northd_loop_maximum")), "{{node}} max")),
+			graph("northd build_lflows / nb_db_run / sb_db_run p95", "ms", 6,
+				t(top(join("ovn_northd_build_lflows_95th_percentile")), "{{node}} build_lflows"),
+				t(top(join("ovn_northd_ovnnb_db_run_95th_percentile")), "{{node}} nb_db_run"),
+				t(top(join("ovn_northd_ovnsb_db_run_95th_percentile")), "{{node}} sb_db_run")),
+			graph("ovn-controller lflow_run rate", "ops", 4,
+				t(top(join(rate("ovn_controller_lflow_run"))), "{{node}}")),
+			graph("Flow generation / installation p95", "ms", 4,
+				t(top(join("ovn_controller_flow_generation_95th_percentile")), "{{node}} generation"),
+				t(top(join("ovn_controller_flow_installation_95th_percentile")), "{{node}} installation")),
+			graph("br-int OpenFlow count", "short", 4,
+				t(top(join("ovn_controller_integration_bridge_openflow_total")), "{{node}}")),
+			graph("DB size", "bytes", 6, t(top(join("ovn_db_db_size_bytes")), "{{node}} {{db_name}}")),
 			noMin(graph("DB growth per hour", "bytes", 6,
-				t(sel("ovnk:ovn_db_size_bytes:deriv_30m", nodeSel)+` * 3600`, "{{node}} {{db_name}}"))),
+				t(top(sel("ovnk:ovn_db_size_bytes:deriv_30m", nodeSel)+` * 3600`), "{{node}} {{db_name}}"))),
 			graph("nbdb/sbdb CPU", "short", 4,
-				t(`sum by (node, container) (`+rate(sel("container_cpu_usage_seconds_total", ovnNS+`,container=~"nbdb|sbdb",`+nodeSel))+`)`, "{{node}} {{container}}")),
+				t(top(`sum by (node, container) (`+rate(sel("container_cpu_usage_seconds_total", ovnNS+`,container=~"nbdb|sbdb",`+nodeSel))+`)`), "{{node}} {{container}}")),
 			graph("nbdb/sbdb RSS", "bytes", 4,
-				t(`sum by (node, container) (`+sel("container_memory_rss", ovnNS+`,container=~"nbdb|sbdb",`+nodeSel)+`)`, "{{node}} {{container}}")),
+				t(top(`sum by (node, container) (`+sel("container_memory_rss", ovnNS+`,container=~"nbdb|sbdb",`+nodeSel)+`)`), "{{node}} {{container}}")),
 			graph("Sessions & monitors", "short", 4,
-				t(join("ovn_db_jsonrpc_server_sessions"), "{{node}} {{db_name}} sessions"),
-				t(join("ovn_db_ovsdb_monitors"), "{{node}} {{db_name}} monitors")),
+				t(top(join("ovn_db_jsonrpc_server_sessions")), "{{node}} {{db_name}} sessions"),
+				t(top(join("ovn_db_ovsdb_monitors")), "{{node}} {{db_name}} monitors")),
 			table("Connection status", 6, []string{"node"},
 				col(`max by (node) (`+join("ovn_northd_nb_connection_status")+`)`, "northd→NB"),
 				col(`max by (node) (`+join("ovn_northd_sb_connection_status")+`)`, "northd→SB"),
 				col(`max by (node) (`+join("ovn_controller_southbound_database_connected")+`)`, "ovn-controller→SB")),
 			graph("libovsdb disconnects", "short", 6,
-				t(`sum by (node) (`+join(rate("ovnkube_master_libovsdb_disconnects_total"))+`)`, "{{node}}")),
-		),
-		row("Transactions & churn",
-			graph("NB update rate by table/op", "ops", 6,
-				t(`sum by (table, op) (`+dedupe(rate(sel("ovnkube_controller_nb_db_updates_total", nodeSel)))+`)`, "{{table}} {{op}}")),
+				t(top(`sum by (node) (`+join(rate("ovnkube_master_libovsdb_disconnects_total"))+`)`), "{{node}}")),
 			graph("northd txn rate by result", "ops", 6, txnTargets("ovn_northd_txn_")...),
 			graph("ovn-controller txn rate by result", "ops", 6, txnTargets("ovn_controller_txn_")...),
-			graph("Txn failure ratio", "percentunit", 6,
-				t(sel("ovnk:ovn_txn_failure:ratio_5m", nodeSel), "{{node}} {{component}}")),
-		),
-		row("Recompute cost",
-			graph("northd loop p95 / max", "ms", 6,
-				t(join("ovn_northd_ovn_northd_loop_95th_percentile"), "{{node}} p95"),
-				t(join("ovn_northd_ovn_northd_loop_maximum"), "{{node}} max")),
-			graph("northd build_lflows / nb_db_run / sb_db_run p95", "ms", 6,
-				t(join("ovn_northd_build_lflows_95th_percentile"), "{{node}} build_lflows"),
-				t(join("ovn_northd_ovnnb_db_run_95th_percentile"), "{{node}} nb_db_run"),
-				t(join("ovn_northd_ovnsb_db_run_95th_percentile"), "{{node}} sb_db_run")),
-			graph("ovn-controller lflow_run rate", "ops", 4,
-				t(join(rate("ovn_controller_lflow_run")), "{{node}}")),
-			graph("Flow generation / installation p95", "ms", 4,
-				t(join("ovn_controller_flow_generation_95th_percentile"), "{{node}} generation"),
-				t(join("ovn_controller_flow_installation_95th_percentile"), "{{node}} installation")),
-			graph("br-int OpenFlow count", "short", 4,
-				t(join("ovn_controller_integration_bridge_openflow_total"), "{{node}}")),
 		),
 		row("Exporter self-cost",
 			graph("Exporter CPU", "short", 3,
-				t(`sum by (node, pod) (`+rate(`container_cpu_usage_seconds_total{namespace="ovnk-observ",container="exporter"}`)+`)`, "{{node}} {{pod}}")),
+				t(top(`sum by (node, pod) (`+rate(`container_cpu_usage_seconds_total{namespace="ovnk-observ",container="exporter"}`)+`)`), "{{node}} {{pod}}")),
 			graph("Exporter memory (working set)", "bytes", 3,
-				t(`sum by (node, pod) (container_memory_working_set_bytes{namespace="ovnk-observ",container="exporter"})`, "{{node}} {{pod}}")),
+				t(top(`sum by (node, pod) (container_memory_working_set_bytes{namespace="ovnk-observ",container="exporter"})`), "{{node}} {{pod}}")),
 			table("DB connected / initial sync", 6, []string{"node", "db"},
 				col(`max by (node, db) (ovnk_observ_db_connected)`, "Connected"),
 				col(`max by (node, db) (ovnk_observ_initial_sync_seconds)`, "Initial sync (s)")),
+			graph("appctl errors", "ops", 12,
+				t(top(`sum by (node) (`+rate("ovnk_observ_appctl_errors_total")+`)`), "{{node}}")),
 		),
 	}
+	rows[len(rows)-2].Collapse = true
 	rows[len(rows)-1].Collapse = true
 
 	id := 1
@@ -413,12 +480,27 @@ func Build() Dashboard {
 		}
 	}
 
+	links := []Link{{
+		Title: "Networking / Infrastructure", Type: "link", Icon: "dashboard",
+		URL: "/monitoring/dashboards/grafana-dashboard-ovn-health", Tooltip: "OVN health overview", KeepTime: true,
+	}}
+	if o.ACLLogURL != "" {
+		lt := o.ACLLogTitle
+		if lt == "" {
+			lt = DefaultACLLogTitle
+		}
+		links = append(links, Link{
+			Title: lt, Type: "link", Icon: "external link", URL: o.ACLLogURL,
+			Tooltip: "External ACL allow/deny view", TargetBlank: true,
+		})
+	}
+
 	return Dashboard{
 		Title:         title,
 		UID:           "ovnk-scale-troubleshooting",
 		Tags:          []string{"networking", "ovn-kubernetes", "ovnk-observ"},
 		Editable:      false,
-		Refresh:       "1m",
+		Refresh:       "2m",
 		SchemaVersion: 14,
 		Timezone:      "UTC",
 		Time:          TimeRange{From: "now-1h", To: "now"},
@@ -435,11 +517,8 @@ func Build() Dashboard {
 				Options: []Option{{Text: "1m", Value: "1m"}, {Text: "5m", Value: "5m", Selected: true}, {Text: "15m", Value: "15m"}},
 			},
 		}},
-		Links: []Link{{
-			Title: "Networking / Infrastructure", Type: "link", Icon: "dashboard",
-			URL: "/monitoring/dashboards/grafana-dashboard-ovn-health", Tooltip: "OVN health overview", KeepTime: true,
-		}},
-		Rows: rows,
+		Links: links,
+		Rows:  rows,
 	}
 }
 
@@ -450,17 +529,6 @@ func amplification() Panel {
 	p.Decimals = new(int)
 	*p.Decimals = 1
 	p.Description = "≥5 warn, ≥10 critical (alert fires >10)"
-	return p
-}
-
-// programmingP99: the 1h p99 is NaN when no network-programming events
-// happened in the hour. ">= 0" drops NaN, so the console gets null, which it
-// maps to "idle" and colors with the base (green) step; a NaN value would
-// land on the critical color.
-func programmingP99() Panel {
-	p := stat("Network programming p99", "s", 2, warnCrit(2, 10), `ovnk:network_programming:p99_1h >= 0`)
-	p.ValueMaps = []ValueMap{{Op: "=", Text: "idle", Value: "null"}}
-	p.Description = "p99 over the last hour; 'idle' = no network-programming events in the hour"
 	return p
 }
 
