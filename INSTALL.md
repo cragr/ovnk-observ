@@ -93,6 +93,12 @@ Re-applying the manifest reverts in-cluster edits. To keep a change, download `o
 - **Drift, inc-engine, churn**: the node DaemonSet runs with `--pg-drift=true` and `--inc-engine=true`; set either to `false` to turn it off. `--inc-engine-nodes` is the list of northd engine nodes exported. The cluster Deployment runs with `--churn-manager-label=topN:10`, which keeps a `manager` label for the first 10 distinct writers and counts later ones under `_other`; `off` drops the label. `--pg-drift` is expected to have the largest cost (see the spec §8 gate; it monitors the `ports` column), so turn it off first if node memory is tight.
 - **Resources**: node pods request 50m CPU and 64Mi and are limited to 500m and 256Mi. The cluster pod requests 20m and 64Mi, limited to 200m and 256Mi. On a cluster with a very large NB database, watch the "Exporter memory" panel and raise the node memory limit if it nears 256Mi.
 - **Alert thresholds**: edit the `alert` rules in the `ovnk-observ` PrometheusRule, or run `oc edit prometheusrule ovnk-observ -n ovnk-observ`.
+- **Forward to ACM**: install ovnk-observ on each managed cluster, then, logged in to the hub:
+  1. `make acm-allowlist` reads the hub's `observability-metrics-custom-allowlist` and writes `acm-allowlist-merged.yaml`: the same ConfigMap with the missing ovnk-observ names appended. Existing names, `recording_rules` and other keys are kept. It applies nothing.
+  2. Review with `oc diff -f acm-allowlist-merged.yaml`, then `oc apply -f acm-allowlist-merged.yaml`. If someone edited the ConfigMap in the meantime, the apply fails on `resourceVersion`; rerun step 1.
+  3. `oc apply -k deploy/acm` adds the "OVN-K Observ / Fleet triage" dashboard to the ACM Grafana, in folder `OVN-K`. It shows which clusters and nodes have drift or a high recompute ratio; click a cluster in the Clusters table to filter to it. Each series carries a `cluster` label.
+
+  Do not apply `deploy/acm/metrics-allowlist.yaml` directly; it would replace the hub's allowlist. This needs the classic metrics collector, which is the one in use when `spec.capabilities` on the `MultiClusterObservability` resource has no `platform.metrics`.
 
 ## 6. Uninstall
 
